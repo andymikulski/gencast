@@ -9,6 +9,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.loadConfig = loadConfig;
 exports.generateCodegen = generateCodegen;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -33,7 +34,30 @@ const DEFAULT_CONFIG = {
     preferReuseCastFunctions: false,
     requireIPrefix: false,
     outputEmptyInterfaces: true,
+    generateClassCasts: false,
+    removeIPrefix: true,
 };
+/**
+ * Attempts to load gencast.config.js from the current working directory.
+ * Returns an empty object if the file doesn't exist or cannot be loaded.
+ */
+function loadConfig() {
+    const configPath = path_1.default.resolve(process.cwd(), 'gencast.config.js');
+    if (!fs_1.default.existsSync(configPath)) {
+        return {};
+    }
+    try {
+        // Use require to load the config file
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const config = require(configPath);
+        console.log(`Loaded configuration from ${configPath}\n`);
+        return config;
+    }
+    catch (error) {
+        console.warn(`Warning: Failed to load gencast.config.js: ${error}`);
+        return {};
+    }
+}
 /**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
@@ -55,7 +79,7 @@ function generateCodegen(userConfig = {}) {
     console.log('\nDone generating interface casters\n');
 }
 function generateCodegenFile(sourceFile, config) {
-    var _a;
+    var _a, _b;
     // If this function is called on a previously-generated file, ignore it
     if (sourceFile.getBaseName().endsWith(config.genFileExt)) {
         return;
@@ -72,18 +96,22 @@ function generateCodegenFile(sourceFile, config) {
     x.isExported() &&
         // We might only be looking at the `I`-prefixed interfaces
         (config.requireIPrefix ? x.getName().charAt(0) === 'I' : true));
-    // If there are no interfaces in this file at all, then we don't need to look at it further
-    if (interfaces.length == 0) {
+    const classes = config.generateClassCasts
+        ? sourceFile.getClasses().filter((x) => x.isExported())
+        : [];
+    // If there are no interfaces or classes in this file at all, then we don't need to look at it further
+    if (interfaces.length == 0 && classes.length == 0) {
         return;
     }
     console.log(sourceFile.getBaseName());
-    let imports = new Map();
+    let typeImports = new Map();
+    let valueImports = new Map();
     let generatedCode = '';
     let hasOutput = false;
     // for each interface found in this source file...
     interfaces.forEach((int) => {
         const interfaceName = int.getName();
-        var compiledPropChecks = processInterface(int, imports, config);
+        var compiledPropChecks = processInterface(int, typeImports, config);
         if (compiledPropChecks.length === 0) {
             const color = config.outputEmptyInterfaces ? '🟨' : '❌';
             console.warn(`\t${color} No prop checks found for interface "${interfaceName}"`);
@@ -110,7 +138,7 @@ function generateCodegenFile(sourceFile, config) {
         // Since the cast functions accept 'any' as a param, we need to double check the possibility
         // that the input is null/undefined
         compiledPropChecks.unshift('obj !== null && obj !== undefined');
-        const funcName = `${config.funcPrefix}${removeIPrefixMaybe(interfaceName)}`;
+        const funcName = `${config.funcPrefix}${removeIPrefixMaybe(interfaceName, config.removeIPrefix)}`;
         const checks = compiledPropChecks.join(' && ');
         generatedCode += `
   export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | null {
@@ -118,23 +146,66 @@ function generateCodegenFile(sourceFile, config) {
   }
   `;
     });
+    // for each class found in this source file...
+    classes.forEach((cls) => {
+        var _a;
+        const className = cls.getName();
+        if (!className) {
+            return;
+        }
+        hasOutput = true;
+        // Track the class as a value import (not a type import) since we need instanceof
+        const file = cls.getSourceFile();
+        const list = (_a = valueImports.get(file)) !== null && _a !== void 0 ? _a : new Set();
+        list.add(className);
+        valueImports.set(file, list);
+        // Handle generics for classes
+        let shortGenerics = [];
+        let fullGenerics = [];
+        cls.getTypeParameters().forEach((v) => {
+            var _a;
+            const extension = ((_a = v.getConstraint()) === null || _a === void 0 ? void 0 : _a.getText()) || '';
+            const longName = v.getName() + (extension ? ` extends ${extension}` : '');
+            const shortName = v.getName();
+            shortGenerics.push(shortName);
+            fullGenerics.push(longName);
+        });
+        const shortGenString = shortGenerics.length > 0 ? `<${shortGenerics.join(', ')}>` : '';
+        const fullGenString = fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
+        const funcName = `${config.funcPrefix}${className}`;
+        generatedCode += `
+  export function ${funcName}${fullGenString}(obj: any): ${className}${shortGenString} | null {
+    return (obj instanceof ${className}) ? obj : null;
+  }
+  `;
+        console.log(`\t✅ ${className} (class)`);
+    });
     if (!hasOutput) {
         return;
     }
     let importString = '';
-    const items = imports.entries();
-    let value;
-    while ((value = (_a = items.next()) === null || _a === void 0 ? void 0 : _a.value)) {
-        const [file, members] = value;
+    // Generate type imports (for interfaces)
+    const typeImportItems = typeImports.entries();
+    let typeValue;
+    while ((typeValue = (_a = typeImportItems.next()) === null || _a === void 0 ? void 0 : _a.value)) {
+        const [file, members] = typeValue;
         const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
         importString += `import type { ${Array.from(members.values()).join(', ')} } from '${relativePath}';\n`;
+    }
+    // Generate value imports (for classes)
+    const valueImportItems = valueImports.entries();
+    let valueValue;
+    while ((valueValue = (_b = valueImportItems.next()) === null || _b === void 0 ? void 0 : _b.value)) {
+        const [file, members] = valueValue;
+        const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
+        importString += `import { ${Array.from(members.values()).join(', ')} } from '${relativePath}';\n`;
     }
     generatedCode =
         Utils.getGenfileHeader(sourceFile) + importString + generatedCode;
     fs_1.default.writeFileSync(outputFilePath, generatedCode);
 }
-function removeIPrefixMaybe(val) {
-    return val.charAt(0) === 'I' ? val.slice(1) : val;
+function removeIPrefixMaybe(val, shouldRemove) {
+    return shouldRemove && val.charAt(0) === 'I' ? val.slice(1) : val;
 }
 function processInterface(interfaceDeclaration, importsRef, config, isInherited = false) {
     var _a;
@@ -155,7 +226,7 @@ function processInterface(interfaceDeclaration, importsRef, config, isInherited 
     // IF TRYING TO REUSE EXISTING CAST FUNCTIONS...
     if (config.preferReuseCastFunctions) {
         interfaceDeclaration.getBaseDeclarations().forEach((i) => {
-            propertiesCheckCode.push(`${config.funcPrefix}${removeIPrefixMaybe(i.getName())}(obj) !== null`);
+            propertiesCheckCode.push(`${config.funcPrefix}${removeIPrefixMaybe(i.getName(), config.removeIPrefix)}(obj) !== null`);
         });
     }
     else {

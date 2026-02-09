@@ -3,4 +3,4 @@
  *
  * This package generates type-safe runtime casting functions based on your TypeScript interfaces.
  */
-export { generateCodegen, GenCastConfig } from './codegen';
+export { generateCodegen, loadConfig, GenCastConfig } from './codegen';

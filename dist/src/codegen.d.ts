@@ -56,7 +56,26 @@ export interface GenCastConfig {
      * @default true
      */
     outputEmptyInterfaces?: boolean;
+    /**
+     * If `true`, will generate cast functions for classes using instanceof checks.
+     * This provides a simpler runtime check compared to property-based validation used for interfaces.
+     *
+     * @default false
+     */
+    generateClassCasts?: boolean;
+    /**
+     * If `true`, will remove the 'I' prefix from interface names when generating function names.
+     * For example, `IUser` will generate `CastToUser` instead of `CastToIUser`.
+     *
+     * @default true
+     */
+    removeIPrefix?: boolean;
 }
+/**
+ * Attempts to load gencast.config.js from the current working directory.
+ * Returns an empty object if the file doesn't exist or cannot be loaded.
+ */
+export declare function loadConfig(): GenCastConfig;
 /**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults

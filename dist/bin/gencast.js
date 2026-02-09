@@ -8,5 +8,7 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const codegen_1 = require("../src/codegen");
-// Run the codegen
-(0, codegen_1.generateCodegen)();
+// Load configuration from gencast.config.js if it exists
+const config = (0, codegen_1.loadConfig)();
+// Run the codegen with the loaded configuration
+(0, codegen_1.generateCodegen)(config);

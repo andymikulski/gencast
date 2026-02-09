@@ -7,7 +7,10 @@
  * It scans your TypeScript project and creates .gen.ts files with CastTo* functions.
  */
 
-import { generateCodegen } from '../src/codegen';
+import { generateCodegen, loadConfig } from '../src/codegen';
 
-// Run the codegen
-generateCodegen();
+// Load configuration from gencast.config.js if it exists
+const config = loadConfig();
+
+// Run the codegen with the loaded configuration
+generateCodegen(config);

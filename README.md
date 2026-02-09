@@ -108,6 +108,10 @@ module.exports = {
 
   // Generate functions for empty interfaces (default: true)
   outputEmptyInterfaces: true,
+
+  // Remove 'I' prefix from interface names in function names (default: true)
+  // For example, IUser generates CastToUser when true, CastToIUser when false
+  removeIPrefix: true,
 };
 ```
 
