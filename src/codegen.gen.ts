@@ -3,6 +3,6 @@
 import type { GenCastConfig } from './codegen';
 
   export function CastToGenCastConfig(obj: any): GenCastConfig | null {
-    return (obj !== null && obj !== undefined) ? obj : null;
+    return (obj != null) ? obj : null;
   }
   

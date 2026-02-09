@@ -289,7 +289,7 @@ function generateCodegenFile(sourceFile, config) {
         stringLiteralTypeAliases.length == 0) {
         return;
     }
-    console.log(sourceFile.getBaseName());
+    console.log('📃 ' + sourceFile.getBaseName());
     // Map<SourceFile, Map<name, isDefault>>
     let typeImports = new Map();
     let valueImports = new Map();
@@ -372,7 +372,7 @@ function generateCodegenFile(sourceFile, config) {
     return (obj instanceof ${className}) ? obj : ${failureValue};
   }
   `;
-        console.log(`\t✅ ${className} (class)`);
+        console.log(`\t${className} (class)`);
     });
     // for each type alias found in this source file...
     typeAliases.forEach((typeAlias) => {
@@ -451,7 +451,7 @@ function generateCodegenFile(sourceFile, config) {
     return (${typeCheck}) ? obj : ${failureValue};
   }
   `;
-        console.log(`\t✅ ${typeName} (primitive type)`);
+        console.log(`\t${typeName} (primitive type)`);
     });
     // for each string literal type alias found in this source file...
     stringLiteralTypeAliases.forEach((typeAlias) => {
@@ -489,7 +489,7 @@ function generateCodegenFile(sourceFile, config) {
     return (${checkString}) ? obj : ${failureValue};
   }
   `;
-        console.log(`\t✅ ${typeName} (string literal type)`);
+        console.log(`\t${typeName} (string literal type)`);
     });
     if (!hasOutput) {
         return;
@@ -668,7 +668,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
         }
     });
     if (!isInherited) {
-        console.log(`\t✅ ${interfaceName}`);
+        console.log(`\t${interfaceName}`);
     }
     return propertiesCheckCode;
 }
@@ -785,6 +785,6 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
             }
         });
     }
-    console.log(`\t✅ ${typeName} (type)`);
+    console.log(`\t${typeName} (type)`);
     return propertiesCheckCode;
 }

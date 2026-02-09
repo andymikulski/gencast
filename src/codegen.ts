@@ -441,7 +441,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
       stringLiteralTypeAliases.length == 0) {
     return;
   }
-  console.log(sourceFile.getBaseName());
+  console.log('📃 ' + sourceFile.getBaseName());
 
   // Map<SourceFile, Map<name, isDefault>>
   let typeImports = new Map<SourceFile, Map<string, boolean>>();
@@ -458,7 +458,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config);
 
     if (compiledPropChecks.length === 0) {
-      const color = config.outputEmptyInterfaces ? '🟨' : '❌';
+      const color = config.outputEmptyInterfaces ? '🚸' : '❌';
       console.warn(
         `\t${color} No prop checks found for interface "${interfaceName}"`
       );
@@ -549,7 +549,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   }
   `;
 
-    console.log(`\t✅ ${className} (class)`);
+    console.log(`\t${className} (class)`);
   });
 
   // for each type alias found in this source file...
@@ -645,7 +645,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   }
   `;
 
-    console.log(`\t✅ ${typeName} (primitive type)`);
+    console.log(`\t${typeName} (primitive type)`);
   });
 
   // for each string literal type alias found in this source file...
@@ -688,7 +688,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   }
   `;
 
-    console.log(`\t✅ ${typeName} (string literal type)`);
+    console.log(`\t${typeName} (string literal type)`);
   });
 
   if (!hasOutput) {
@@ -906,7 +906,7 @@ function processInterface(
   });
 
   if (!isInherited) {
-    console.log(`\t✅ ${interfaceName}`);
+    console.log(`\t${interfaceName}`);
   }
 
   return propertiesCheckCode;
@@ -1043,7 +1043,7 @@ function processTypeAlias(
     });
   }
 
-  console.log(`\t✅ ${typeName} (type)`);
+  console.log(`\t${typeName} (type)`);
 
   return propertiesCheckCode;
 }
