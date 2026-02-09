@@ -143,6 +143,59 @@ export function loadConfig(): GenCastConfig {
 }
 
 /**
+ * Generates a gencast.config.js file with default values and documentation.
+ * @returns true if the file was created, false if it already exists
+ */
+export function initConfig(): boolean {
+  const configPath = path.resolve(process.cwd(), 'gencast.config.js');
+
+  if (fs.existsSync(configPath)) {
+    console.error('Error: gencast.config.js already exists in this directory.');
+    return false;
+  }
+
+  const configContent = `/** @type {import('gencast').GenCastConfig} */
+module.exports = {
+  // Path to your tsconfig.json (default: './tsconfig.json')
+  tsconfigPath: './tsconfig.json',
+
+  // Extension for generated files (default: '.gen.ts')
+  genFileExt: '.gen.ts',
+
+  // Prefix for generated functions (default: 'CastTo')
+  funcPrefix: 'CastTo',
+
+  // Reuse cast functions for inherited interfaces (default: false)
+  // Warning: may create circular dependencies
+  preferReuseCastFunctions: false,
+
+  // Generate functions for empty interfaces (default: true)
+  outputEmptyInterfaces: true,
+
+  // Generate cast functions for classes using instanceof (default: false)
+  generateClassCasts: false,
+
+  // Only generate for interfaces with 'I' prefix (default: false)
+  requireIPrefix: false,
+
+  // Remove 'I' prefix from interface names in function names (default: true)
+  // For example, IUser generates CastToUser when true, CastToIUser when false
+  removeIPrefix: false,
+};
+`;
+
+  try {
+    fs.writeFileSync(configPath, configContent, 'utf8');
+    console.log(`✅ Created gencast.config.js in ${process.cwd()}`);
+    console.log('\nYou can now customize the configuration options to fit your project.');
+    return true;
+  } catch (error) {
+    console.error(`Error: Failed to create gencast.config.js: ${error}`);
+    return false;
+  }
+}
+
+/**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
  */

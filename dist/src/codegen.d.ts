@@ -77,6 +77,11 @@ export interface GenCastConfig {
  */
 export declare function loadConfig(): GenCastConfig;
 /**
+ * Generates a gencast.config.js file with default values and documentation.
+ * @returns true if the file was created, false if it already exists
+ */
+export declare function initConfig(): boolean;
+/**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
  */

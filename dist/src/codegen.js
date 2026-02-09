@@ -10,6 +10,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadConfig = loadConfig;
+exports.initConfig = initConfig;
 exports.generateCodegen = generateCodegen;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -56,6 +57,56 @@ function loadConfig() {
     catch (error) {
         console.warn(`Warning: Failed to load gencast.config.js: ${error}`);
         return {};
+    }
+}
+/**
+ * Generates a gencast.config.js file with default values and documentation.
+ * @returns true if the file was created, false if it already exists
+ */
+function initConfig() {
+    const configPath = path_1.default.resolve(process.cwd(), 'gencast.config.js');
+    if (fs_1.default.existsSync(configPath)) {
+        console.error('Error: gencast.config.js already exists in this directory.');
+        return false;
+    }
+    const configContent = `/** @type {import('gencast').GenCastConfig} */
+module.exports = {
+  // Path to your tsconfig.json (default: './tsconfig.json')
+  tsconfigPath: './tsconfig.json',
+
+  // Extension for generated files (default: '.gen.ts')
+  genFileExt: '.gen.ts',
+
+  // Prefix for generated functions (default: 'CastTo')
+  funcPrefix: 'CastTo',
+
+  // Reuse cast functions for inherited interfaces (default: false)
+  // Warning: may create circular dependencies
+  preferReuseCastFunctions: false,
+
+  // Generate functions for empty interfaces (default: true)
+  outputEmptyInterfaces: true,
+
+  // Generate cast functions for classes using instanceof (default: false)
+  generateClassCasts: false,
+
+  // Only generate for interfaces with 'I' prefix (default: false)
+  requireIPrefix: false,
+
+  // Remove 'I' prefix from interface names in function names (default: true)
+  // For example, IUser generates CastToUser when true, CastToIUser when false
+  removeIPrefix: false,
+};
+`;
+    try {
+        fs_1.default.writeFileSync(configPath, configContent, 'utf8');
+        console.log(`✅ Created gencast.config.js in ${process.cwd()}`);
+        console.log('\nYou can now customize the configuration options to fit your project.');
+        return true;
+    }
+    catch (error) {
+        console.error(`Error: Failed to create gencast.config.js: ${error}`);
+        return false;
     }
 }
 /**

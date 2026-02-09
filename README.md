@@ -48,7 +48,19 @@ yarn add -D gencast
 }
 ```
 
-2. **Run GenCast:**
+2. **(Optional) Create a configuration file:**
+
+```bash
+npm run gencast init
+# or
+yarn gencast init
+# or
+npx gencast init
+```
+
+This creates a `gencast.config.js` file with all available options and their defaults.
+
+3. **Run GenCast:**
 
 ```bash
 npm run gencast
@@ -58,7 +70,7 @@ yarn gencast
 npx gencast
 ```
 
-3. **Use the generated casting functions:**
+4. **Use the generated casting functions:**
 
 ```typescript
 import { CastToUser } from './User.gen';
@@ -83,9 +95,28 @@ GenCast scans all TypeScript files in your project (based on your `tsconfig.json
 3. Creates `CastTo*` functions that validate object shapes at runtime
 4. Handles inheritance, generics, nullable types, and string unions
 
+## CLI Commands
+
+```bash
+# Generate casting functions (default command)
+gencast
+
+# Create a gencast.config.js configuration file
+gencast init
+
+# Show help message
+gencast --help
+```
+
 ## Configuration
 
 Create a `gencast.config.js` file in your project root (optional):
+
+```bash
+npx gencast init
+```
+
+This will create a configuration file with all available options:
 
 ```javascript
 /** @type {import('gencast').GenCastConfig} */

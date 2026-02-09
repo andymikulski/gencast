@@ -8,7 +8,31 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 const codegen_1 = require("../src/codegen");
-// Load configuration from gencast.config.js if it exists
-const config = (0, codegen_1.loadConfig)();
-// Run the codegen with the loaded configuration
-(0, codegen_1.generateCodegen)(config);
+const args = process.argv.slice(2);
+const command = args[0];
+// Handle commands
+if (command === 'init') {
+    // Generate a gencast.config.js file
+    (0, codegen_1.initConfig)();
+}
+else if (command === '--help' || command === '-h') {
+    // Display help
+    console.log(`
+GenCast - Runtime type casting for TypeScript interfaces
+
+Usage:
+  gencast           Generate casting functions for your interfaces
+  gencast init      Create a gencast.config.js configuration file
+  gencast --help    Show this help message
+`);
+}
+else if (command) {
+    console.error(`Unknown command: ${command}`);
+    console.log('Run "gencast --help" for usage information.');
+    process.exit(1);
+}
+else {
+    // Default behavior: run the codegen
+    const config = (0, codegen_1.loadConfig)();
+    (0, codegen_1.generateCodegen)(config);
+}
