@@ -253,7 +253,7 @@ module.exports = {
 
   try {
     fs.writeFileSync(configPath, configContent, 'utf8');
-    console.log(`✅ Created gencast.config.js in ${process.cwd()}`);
+    console.log(`✅ Created ${process.cwd()}/gencast.config.js`);
     console.log('\nYou can now customize the configuration options to fit your project.');
     return true;
   } catch (error) {
