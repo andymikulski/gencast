@@ -1,46 +1,210 @@
-# Getting Started with Create React App
+# GenCast
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**Runtime type casting for TypeScript interfaces using duck typing**
 
-## Available Scripts
+GenCast automatically generates type-safe runtime casting functions for your TypeScript interfaces. It crawls your TypeScript project and creates `.gen.ts` files with `CastTo*` functions that validate object shapes at runtime using duck typing.
 
-In the project directory, you can run:
+## Why GenCast?
 
-### `npm start`
+TypeScript's type system is erased at runtime, meaning you can't validate if an `unknown` or `any` value matches an interface. GenCast solves this by generating runtime validators that check if an object has the correct shape.
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+```typescript
+// Your interface
+export interface IUser {
+  id: number;
+  name: string;
+  email: string;
+}
 
-The page will reload if you make edits.\
-You will also see any lint errors in the console.
+// Generated function (in IUser.gen.ts)
+export function CastToUser(obj: any): IUser | null {
+  return (
+    obj !== null &&
+    obj !== undefined &&
+    typeof(obj.id) === "number" &&
+    typeof(obj.name) === "string" &&
+    typeof(obj.email) === "string"
+  ) ? obj : null;
+}
+```
 
-### `npm test`
+## Installation
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+```bash
+npm install --save-dev gencast
+# or
+yarn add -D gencast
+```
 
-### `npm run build`
+## Quick Start
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+1. **Add the script to your `package.json`:**
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+```json
+{
+  "scripts": {
+    "gencast": "gencast"
+  }
+}
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+2. **Run GenCast:**
 
-### `npm run eject`
+```bash
+npm run gencast
+# or
+yarn gencast
+# or
+npx gencast
+```
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+3. **Use the generated casting functions:**
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```typescript
+import { CastToUser } from './User.gen';
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+const data: any = await fetchUserFromAPI();
+const user = CastToUser(data);
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+if (user) {
+  // user is now typed as IUser and validated!
+  console.log(user.name);
+} else {
+  console.error('Invalid user data received');
+}
+```
 
-## Learn More
+## How It Works
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+GenCast scans all TypeScript files in your project (based on your `tsconfig.json`) and:
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+1. Finds all **exported** interfaces
+2. Generates a `.gen.ts` file next to each source file containing interfaces
+3. Creates `CastTo*` functions that validate object shapes at runtime
+4. Handles inheritance, generics, nullable types, and string unions
+
+## Configuration
+
+Create a `gencast.config.js` file in your project root (optional):
+
+```javascript
+/** @type {import('gencast').GenCastConfig} */
+module.exports = {
+  // Path to your tsconfig.json (default: './tsconfig.json')
+  tsconfigPath: './tsconfig.json',
+
+  // Extension for generated files (default: '.gen.ts')
+  genFileExt: '.gen.ts',
+
+  // Prefix for generated functions (default: 'CastTo')
+  funcPrefix: 'CastTo',
+
+  // Reuse cast functions for inherited interfaces (default: false)
+  // Warning: may create circular dependencies
+  preferReuseCastFunctions: false,
+
+  // Only generate for interfaces with 'I' prefix (default: false)
+  requireIPrefix: false,
+
+  // Generate functions for empty interfaces (default: true)
+  outputEmptyInterfaces: true,
+};
+```
+
+You can also use the API programmatically:
+
+```typescript
+import { generateCodegen } from 'gencast';
+
+generateCodegen({
+  tsconfigPath: './tsconfig.json',
+  funcPrefix: 'Validate',
+});
+```
+
+## Features
+
+### Handles Complex Types
+
+- **Inheritance**: Validates all properties from parent interfaces
+- **Generics**: Generates generic casting functions
+- **Nullable types**: Properly handles `| null` unions
+- **String unions**: Validates string literal types like `"admin" | "user"`
+- **Methods**: Checks that methods exist (but can't validate signatures)
+
+### Smart Generation
+
+- Only generates for **exported** interfaces
+- Skips previously generated `.gen.ts` files
+- Removes outdated generated files automatically
+- Handles relative imports correctly
+
+### TypeScript Native
+
+- Uses `ts-morph` for accurate TypeScript parsing
+- Respects your `tsconfig.json` settings
+- Generates properly typed `.d.ts` files
+
+## Example
+
+**Input (`User.ts`):**
+
+```typescript
+export interface IUser {
+  id: number;
+  name: string;
+  email: string;
+  role?: "admin" | "user";
+}
+
+export interface IAdmin extends IUser {
+  permissions: string[];
+}
+```
+
+**Generated (`User.gen.ts`):**
+
+```typescript
+import type { IUser, IAdmin } from './User';
+
+export function CastToUser(obj: any): IUser | null {
+  return (
+    obj !== null &&
+    obj !== undefined &&
+    typeof(obj.id) === "number" &&
+    typeof(obj.name) === "string" &&
+    typeof(obj.email) === "string"
+  ) ? obj : null;
+}
+
+export function CastToAdmin(obj: any): IAdmin | null {
+  return (
+    obj !== null &&
+    obj !== undefined &&
+    typeof(obj.id) === "number" &&
+    typeof(obj.name) === "string" &&
+    typeof(obj.email) === "string" &&
+    typeof(obj.permissions) === "object"
+  ) ? obj : null;
+}
+```
+
+## Use Cases
+
+- **API Response Validation**: Validate data from external APIs
+- **Message Queue Handlers**: Ensure messages have the correct shape
+- **Storage Deserialization**: Validate data loaded from localStorage/database
+- **Third-party Library Integration**: Type-check data from untyped libraries
+- **Runtime Type Guards**: Generate type guards automatically
+
+## Limitations
+
+- Cannot validate method return types (only checks methods exist)
+- Generic type parameters are checked for existence, not specific types
+- Optional properties (`?`) are not validated
+- Array/object contents are not deeply validated (only checks `typeof === "object"`)
+
+## License
+
+MIT
+

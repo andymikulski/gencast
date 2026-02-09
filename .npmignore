@@ -1,0 +1,29 @@
+# Source files
+src/
+bin/
+*.ts
+
+# Config files
+tsconfig.json
+.gitignore
+.npmignore
+
+# Example/test files
+MyTestFile.ts
+MyTestFile.gen.ts
+
+# Development
+node_modules/
+.vscode/
+.idea/
+
+# Testing
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
+# Misc
+.DS_Store
+npm-debug.log
+yarn-error.log

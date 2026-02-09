@@ -1,49 +1,46 @@
 {
-  "name": "gencast-ts",
-  "version": "0.1.0",
-  "private": true,
+  "name": "gencast",
+  "version": "1.0.0",
+  "description": "Runtime type casting for TypeScript interfaces using duck typing",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "gencast": "./dist/bin/gencast.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "typescript",
+    "runtime",
+    "type-checking",
+    "casting",
+    "duck-typing",
+    "validation",
+    "codegen",
+    "interface"
+  ],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  },
   "dependencies": {
-    "@testing-library/dom": "^10.4.1",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^13.5.0",
-    "@types/jest": "^27.5.2",
-    "@types/node": "^16.18.126",
-    "@types/react": "^19.2.13",
-    "@types/react-dom": "^19.2.3",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "react-scripts": "5.0.1",
-    "typescript": "^5.7.0",
-    "web-vitals": "^2.1.4"
-  },
-  "scripts": {
-    "start": "react-scripts start",
-    "build": "react-scripts build",
-    "test": "react-scripts test",
-    "eject": "react-scripts eject",
-    "codegen": "ts-node codegen.ts"
-  },
-  "eslintConfig": {
-    "extends": [
-      "react-app",
-      "react-app/jest"
-    ]
-  },
-  "browserslist": {
-    "production": [
-      ">0.2%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 1 chrome version",
-      "last 1 firefox version",
-      "last 1 safari version"
-    ]
+    "ts-morph": "^27.0.2"
   },
   "devDependencies": {
-    "ts-morph": "^27.0.2",
-    "ts-node": "^10.9.2"
+    "@types/node": "^16.18.126",
+    "typescript": "^5.7.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "node dist/bin/gencast.js"
   }
 }
