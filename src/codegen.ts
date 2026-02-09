@@ -257,8 +257,9 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   }
   console.log(sourceFile.getBaseName());
 
-  let typeImports = new Map<SourceFile, Set<string>>();
-  let valueImports = new Map<SourceFile, Set<string>>();
+  // Map<SourceFile, Map<name, isDefault>>
+  let typeImports = new Map<SourceFile, Map<string, boolean>>();
+  let valueImports = new Map<SourceFile, Map<string, boolean>>();
   let generatedCode = '';
   let hasOutput = false;
 
@@ -325,8 +326,8 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
     // Track the class as a value import (not a type import) since we need instanceof
     const file = cls.getSourceFile();
-    const list = valueImports.get(file) ?? new Set<string>();
-    list.add(className);
+    const list = valueImports.get(file) ?? new Map<string, boolean>();
+    list.set(className, cls.isDefaultExport());
     valueImports.set(file, list);
 
     // Handle generics for classes
@@ -366,24 +367,60 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
   // Generate type imports (for interfaces)
   const typeImportItems = typeImports.entries();
-  let typeValue: [SourceFile, Set<string>];
+  let typeValue: [SourceFile, Map<string, boolean>];
   while ((typeValue = typeImportItems.next()?.value!)) {
     const [file, members] = typeValue;
     const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
-    importString += `import type { ${Array.from(members.values()).join(
-      ', '
-    )} } from '${relativePath}';\n`;
+
+    const defaultImports: string[] = [];
+    const namedImports: string[] = [];
+
+    members.forEach((isDefault, name) => {
+      if (isDefault) {
+        defaultImports.push(name);
+      } else {
+        namedImports.push(name);
+      }
+    });
+
+    // Generate default imports
+    defaultImports.forEach(name => {
+      importString += `import type ${name} from '${relativePath}';\n`;
+    });
+
+    // Generate named imports
+    if (namedImports.length > 0) {
+      importString += `import type { ${namedImports.join(', ')} } from '${relativePath}';\n`;
+    }
   }
 
   // Generate value imports (for classes)
   const valueImportItems = valueImports.entries();
-  let valueValue: [SourceFile, Set<string>];
+  let valueValue: [SourceFile, Map<string, boolean>];
   while ((valueValue = valueImportItems.next()?.value!)) {
     const [file, members] = valueValue;
     const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
-    importString += `import { ${Array.from(members.values()).join(
-      ', '
-    )} } from '${relativePath}';\n`;
+
+    const defaultImports: string[] = [];
+    const namedImports: string[] = [];
+
+    members.forEach((isDefault, name) => {
+      if (isDefault) {
+        defaultImports.push(name);
+      } else {
+        namedImports.push(name);
+      }
+    });
+
+    // Generate default imports
+    defaultImports.forEach(name => {
+      importString += `import ${name} from '${relativePath}';\n`;
+    });
+
+    // Generate named imports
+    if (namedImports.length > 0) {
+      importString += `import { ${namedImports.join(', ')} } from '${relativePath}';\n`;
+    }
   }
 
   generatedCode =
@@ -398,7 +435,7 @@ function removeIPrefixMaybe(val: string, shouldRemove: boolean) {
 
 function processInterface(
   interfaceDeclaration: InterfaceDeclaration,
-  importsRef: Map<SourceFile, Set<string>>,
+  importsRef: Map<SourceFile, Map<string, boolean>>,
   config: Required<GenCastConfig>,
   isInherited: boolean = false
 ): string[] {
@@ -413,8 +450,8 @@ function processInterface(
     // If this is NOT inherited, then we need to add it to the imports list which is included in
     // the header of the generated file.
     const file = interfaceDeclaration.getSourceFile();
-    const list = importsRef.get(file) ?? new Set<string>();
-    list.add(interfaceName);
+    const list = importsRef.get(file) ?? new Map<string, boolean>();
+    list.set(interfaceName, interfaceDeclaration.isDefaultExport());
     importsRef.set(file, list);
   }
 
@@ -423,9 +460,13 @@ function processInterface(
   // IF TRYING TO REUSE EXISTING CAST FUNCTIONS...
   if (config.preferReuseCastFunctions) {
     interfaceDeclaration.getBaseDeclarations().forEach((i) => {
-      propertiesCheckCode.push(
-        `${config.funcPrefix}${removeIPrefixMaybe(i.getName()!, config.removeIPrefix)}(obj) !== null`
-      );
+      // Only process if it's actually an InterfaceDeclaration
+      if (i.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
+        const baseInterface = i as InterfaceDeclaration;
+        propertiesCheckCode.push(
+          `${config.funcPrefix}${removeIPrefixMaybe(baseInterface.getName()!, config.removeIPrefix)}(obj) !== null`
+        );
+      }
     });
   } else {
     interfaceDeclaration.getBaseDeclarations().forEach((i) => {
@@ -436,7 +477,8 @@ function processInterface(
       if (i.isKind(ts.SyntaxKind.TypeLiteral)) {
         const subProps = processTypeLiteral(<TypeLiteralNode>i);
         propertiesCheckCode.push(...subProps);
-      } else {
+      } else if (i.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
+        // Only process as InterfaceDeclaration if it actually is one
         const subProps = processInterface(
           <InterfaceDeclaration>i,
           importsRef,
@@ -445,6 +487,7 @@ function processInterface(
         );
         propertiesCheckCode.push(...subProps);
       }
+      // Skip other base declaration types (e.g., type references like Partial<T>)
     });
   }
 

@@ -155,6 +155,7 @@ function generateCodegenFile(sourceFile, config) {
         return;
     }
     console.log(sourceFile.getBaseName());
+    // Map<SourceFile, Map<name, isDefault>>
     let typeImports = new Map();
     let valueImports = new Map();
     let generatedCode = '';
@@ -207,8 +208,8 @@ function generateCodegenFile(sourceFile, config) {
         hasOutput = true;
         // Track the class as a value import (not a type import) since we need instanceof
         const file = cls.getSourceFile();
-        const list = (_a = valueImports.get(file)) !== null && _a !== void 0 ? _a : new Set();
-        list.add(className);
+        const list = (_a = valueImports.get(file)) !== null && _a !== void 0 ? _a : new Map();
+        list.set(className, cls.isDefaultExport());
         valueImports.set(file, list);
         // Handle generics for classes
         let shortGenerics = [];
@@ -241,7 +242,24 @@ function generateCodegenFile(sourceFile, config) {
     while ((typeValue = (_a = typeImportItems.next()) === null || _a === void 0 ? void 0 : _a.value)) {
         const [file, members] = typeValue;
         const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
-        importString += `import type { ${Array.from(members.values()).join(', ')} } from '${relativePath}';\n`;
+        const defaultImports = [];
+        const namedImports = [];
+        members.forEach((isDefault, name) => {
+            if (isDefault) {
+                defaultImports.push(name);
+            }
+            else {
+                namedImports.push(name);
+            }
+        });
+        // Generate default imports
+        defaultImports.forEach(name => {
+            importString += `import type ${name} from '${relativePath}';\n`;
+        });
+        // Generate named imports
+        if (namedImports.length > 0) {
+            importString += `import type { ${namedImports.join(', ')} } from '${relativePath}';\n`;
+        }
     }
     // Generate value imports (for classes)
     const valueImportItems = valueImports.entries();
@@ -249,7 +267,24 @@ function generateCodegenFile(sourceFile, config) {
     while ((valueValue = (_b = valueImportItems.next()) === null || _b === void 0 ? void 0 : _b.value)) {
         const [file, members] = valueValue;
         const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
-        importString += `import { ${Array.from(members.values()).join(', ')} } from '${relativePath}';\n`;
+        const defaultImports = [];
+        const namedImports = [];
+        members.forEach((isDefault, name) => {
+            if (isDefault) {
+                defaultImports.push(name);
+            }
+            else {
+                namedImports.push(name);
+            }
+        });
+        // Generate default imports
+        defaultImports.forEach(name => {
+            importString += `import ${name} from '${relativePath}';\n`;
+        });
+        // Generate named imports
+        if (namedImports.length > 0) {
+            importString += `import { ${namedImports.join(', ')} } from '${relativePath}';\n`;
+        }
     }
     generatedCode =
         Utils.getGenfileHeader(sourceFile) + importString + generatedCode;
@@ -269,15 +304,19 @@ function processInterface(interfaceDeclaration, importsRef, config, isInherited 
         // If this is NOT inherited, then we need to add it to the imports list which is included in
         // the header of the generated file.
         const file = interfaceDeclaration.getSourceFile();
-        const list = (_a = importsRef.get(file)) !== null && _a !== void 0 ? _a : new Set();
-        list.add(interfaceName);
+        const list = (_a = importsRef.get(file)) !== null && _a !== void 0 ? _a : new Map();
+        list.set(interfaceName, interfaceDeclaration.isDefaultExport());
         importsRef.set(file, list);
     }
     // For interfaces with extensions, we will simply confirm that we can cast to the ancestors
     // IF TRYING TO REUSE EXISTING CAST FUNCTIONS...
     if (config.preferReuseCastFunctions) {
         interfaceDeclaration.getBaseDeclarations().forEach((i) => {
-            propertiesCheckCode.push(`${config.funcPrefix}${removeIPrefixMaybe(i.getName(), config.removeIPrefix)}(obj) !== null`);
+            // Only process if it's actually an InterfaceDeclaration
+            if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
+                const baseInterface = i;
+                propertiesCheckCode.push(`${config.funcPrefix}${removeIPrefixMaybe(baseInterface.getName(), config.removeIPrefix)}(obj) !== null`);
+            }
         });
     }
     else {
@@ -289,10 +328,12 @@ function processInterface(interfaceDeclaration, importsRef, config, isInherited 
                 const subProps = processTypeLiteral(i);
                 propertiesCheckCode.push(...subProps);
             }
-            else {
+            else if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
+                // Only process as InterfaceDeclaration if it actually is one
                 const subProps = processInterface(i, importsRef, config, true);
                 propertiesCheckCode.push(...subProps);
             }
+            // Skip other base declaration types (e.g., type references like Partial<T>)
         });
     }
     // Ensure all methods exist. (Unfortunately we can't check if the return types are compatible!)
