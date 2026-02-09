@@ -3,14 +3,14 @@
 import type { IUser, IAdmin, IGuest } from './User';
 
   export function CastToUser(obj: any): IUser | null {
-    return (obj != null && typeof(obj.id) === "number" && typeof(obj.name) === "string" && typeof(obj.email) === "string" && typeof(obj.isActive) === "boolean") ? obj : null;
+    return (obj !== null && obj !== undefined && typeof(obj.id) === "number" && typeof(obj.name) === "string" && typeof(obj.email) === "string" && typeof(obj.isActive) === "boolean") ? obj : null;
   }
   
   export function CastToAdmin(obj: any): IAdmin | null {
-    return (obj != null && CastToUser(obj) !== null && obj.role === "admin") ? obj : null;
+    return (obj !== null && obj !== undefined && CastToUser(obj) !== null && obj.role === "admin") ? obj : null;
   }
   
   export function CastToGuest(obj: any): IGuest | null {
-    return (obj != null && typeof(obj.getDisplayName) === "function" && typeof(obj.sessionId) === "string") ? obj : null;
+    return (obj !== null && obj !== undefined && typeof(obj.getDisplayName) === "function" && typeof(obj.sessionId) === "string") ? obj : null;
   }
   

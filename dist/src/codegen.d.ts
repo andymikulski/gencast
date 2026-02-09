@@ -64,6 +64,27 @@ export interface GenCastConfig {
      */
     generateClassCasts?: boolean;
     /**
+     * If `true`, will generate cast functions for type aliases with object types.
+     *
+     * @default false
+     */
+    generateTypeCasts?: boolean;
+    /**
+     * If `true`, will generate cast functions for primitive type aliases.
+     * For example, `type ID = number` will generate a function that checks typeof.
+     *
+     * @default false
+     */
+    generatePrimitiveTypeCasts?: boolean;
+    /**
+     * If `true`, will generate cast functions for string literal union types.
+     * For example, `type Status = 'active' | 'inactive'` will generate a function
+     * that validates the string matches one of the allowed values.
+     *
+     * @default false
+     */
+    generateStringLiteralTypeCasts?: boolean;
+    /**
      * If `true`, will remove the 'I' prefix from interface names when generating function names.
      * For example, `IUser` will generate `CastToUser` instead of `CastToIUser`.
      *

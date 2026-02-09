@@ -36,9 +36,12 @@ const DEFAULT_CONFIG = {
     requireIPrefix: false,
     outputEmptyInterfaces: true,
     generateClassCasts: false,
+    generateTypeCasts: false,
+    generatePrimitiveTypeCasts: false,
+    generateStringLiteralTypeCasts: false,
     removeIPrefix: true,
     failureReturnValue: 'null',
-    strictNullCheck: true,
+    strictNullCheck: false,
 };
 /**
  * Attempts to load gencast.config.js from the current working directory.
@@ -91,6 +94,18 @@ module.exports = {
 
   // Generate cast functions for classes using instanceof (default: false)
   generateClassCasts: false,
+
+  // Generate cast functions for type aliases with object types (default: false)
+  // Primitive type aliases like 'type ID = number' are automatically skipped
+  generateTypeCasts: false,
+
+  // Generate cast functions for primitive type aliases (default: false)
+  // Example: type ID = number -> CastToID checks typeof === 'number'
+  generatePrimitiveTypeCasts: false,
+
+  // Generate cast functions for string literal unions (default: false)
+  // Example: type Status = 'active' | 'inactive' -> validates string matches allowed values
+  generateStringLiteralTypeCasts: false,
 
   // Only generate for interfaces with 'I' prefix (default: false)
   requireIPrefix: false,
@@ -161,8 +176,49 @@ function generateCodegenFile(sourceFile, config) {
     const classes = config.generateClassCasts
         ? sourceFile.getClasses().filter((x) => x.isExported())
         : [];
-    // If there are no interfaces or classes in this file at all, then we don't need to look at it further
-    if (interfaces.length == 0 && classes.length == 0) {
+    // Collect different types of type aliases based on configuration
+    let typeAliases = [];
+    let primitiveTypeAliases = [];
+    let stringLiteralTypeAliases = [];
+    if (config.generateTypeCasts || config.generatePrimitiveTypeCasts || config.generateStringLiteralTypeCasts) {
+        sourceFile.getTypeAliases().forEach((x) => {
+            if (!x.isExported())
+                return;
+            const type = x.getType();
+            // Check for string literal unions (e.g., 'active' | 'inactive' | 'pending')
+            if (type.isUnion()) {
+                const unionTypes = type.getUnionTypes();
+                const allStringLiterals = unionTypes.every(t => t.isStringLiteral());
+                if (allStringLiterals && config.generateStringLiteralTypeCasts) {
+                    stringLiteralTypeAliases.push(x);
+                    return;
+                }
+            }
+            // Check for single string literal
+            if (type.isStringLiteral() && config.generateStringLiteralTypeCasts) {
+                stringLiteralTypeAliases.push(x);
+                return;
+            }
+            // Check for primitive types (number, string, boolean)
+            if (config.generatePrimitiveTypeCasts) {
+                if (type.isString() || type.isNumber() || type.isBoolean()) {
+                    primitiveTypeAliases.push(x);
+                    return;
+                }
+            }
+            // Check for object types with properties
+            if (config.generateTypeCasts) {
+                const properties = type.getProperties();
+                if (properties.length > 0) {
+                    typeAliases.push(x);
+                }
+            }
+        });
+    }
+    // If there are no interfaces, classes, or type aliases in this file at all, then we don't need to look at it further
+    if (interfaces.length == 0 && classes.length == 0 &&
+        typeAliases.length == 0 && primitiveTypeAliases.length == 0 &&
+        stringLiteralTypeAliases.length == 0) {
         return;
     }
     console.log(sourceFile.getBaseName());
@@ -249,6 +305,123 @@ function generateCodegenFile(sourceFile, config) {
   }
   `;
         console.log(`\t✅ ${className} (class)`);
+    });
+    // for each type alias found in this source file...
+    typeAliases.forEach((typeAlias) => {
+        const typeName = typeAlias.getName();
+        if (!typeName) {
+            return;
+        }
+        var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config);
+        if (compiledPropChecks.length === 0) {
+            const color = config.outputEmptyInterfaces ? '🟨' : '❌';
+            console.warn(`\t${color} No prop checks found for type "${typeName}"`);
+            if (!config.outputEmptyInterfaces) {
+                return;
+            }
+        }
+        hasOutput = true;
+        // Handle generics for type aliases
+        let shortGenerics = [];
+        let fullGenerics = [];
+        typeAlias.getTypeParameters().forEach((v) => {
+            var _a;
+            const extension = ((_a = v.getConstraint()) === null || _a === void 0 ? void 0 : _a.getText()) || '';
+            const longName = v.getName() + (extension ? ` extends ${extension}` : '');
+            const shortName = v.getName();
+            shortGenerics.push(shortName);
+            fullGenerics.push(longName);
+        });
+        const shortGenString = shortGenerics.length > 0 ? `<${shortGenerics.join(', ')}>` : '';
+        const fullGenString = fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
+        const nullCheck = config.strictNullCheck
+            ? 'obj !== null && obj !== undefined'
+            : 'obj != null';
+        compiledPropChecks.unshift(nullCheck);
+        const funcName = `${config.funcPrefix}${typeName}`;
+        const checks = compiledPropChecks.join(' && ');
+        const failureValue = config.failureReturnValue;
+        generatedCode += `
+  export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
+    return (${checks}) ? obj : ${failureValue};
+  }
+  `;
+    });
+    // for each primitive type alias found in this source file...
+    primitiveTypeAliases.forEach((typeAlias) => {
+        var _a;
+        const typeName = typeAlias.getName();
+        if (!typeName) {
+            return;
+        }
+        hasOutput = true;
+        const type = typeAlias.getType();
+        let typeCheck = '';
+        if (type.isString()) {
+            typeCheck = 'typeof(obj) === "string"';
+        }
+        else if (type.isNumber()) {
+            typeCheck = 'typeof(obj) === "number"';
+        }
+        else if (type.isBoolean()) {
+            typeCheck = 'typeof(obj) === "boolean"';
+        }
+        else {
+            // Fallback - shouldn't happen given our filtering
+            console.warn(`\t⚠️ Unknown primitive type for "${typeName}"`);
+            return;
+        }
+        // Add type to imports
+        const file = typeAlias.getSourceFile();
+        const list = (_a = typeImports.get(file)) !== null && _a !== void 0 ? _a : new Map();
+        list.set(typeName, typeAlias.isDefaultExport());
+        typeImports.set(file, list);
+        const funcName = `${config.funcPrefix}${typeName}`;
+        const failureValue = config.failureReturnValue;
+        generatedCode += `
+  export function ${funcName}(obj: any): ${typeName} | ${failureValue} {
+    return (${typeCheck}) ? obj : ${failureValue};
+  }
+  `;
+        console.log(`\t✅ ${typeName} (primitive type)`);
+    });
+    // for each string literal type alias found in this source file...
+    stringLiteralTypeAliases.forEach((typeAlias) => {
+        var _a;
+        const typeName = typeAlias.getName();
+        if (!typeName) {
+            return;
+        }
+        hasOutput = true;
+        const type = typeAlias.getType();
+        let checks = [];
+        if (type.isUnion()) {
+            // Handle union of string literals
+            const unionTypes = type.getUnionTypes();
+            checks = unionTypes.map((t) => `obj === ${t.getText()}`);
+        }
+        else if (type.isStringLiteral()) {
+            // Handle single string literal
+            checks = [`obj === ${type.getText()}`];
+        }
+        else {
+            console.warn(`\t⚠️ Unexpected type for string literal "${typeName}"`);
+            return;
+        }
+        // Add type to imports
+        const file = typeAlias.getSourceFile();
+        const list = (_a = typeImports.get(file)) !== null && _a !== void 0 ? _a : new Map();
+        list.set(typeName, typeAlias.isDefaultExport());
+        typeImports.set(file, list);
+        const funcName = `${config.funcPrefix}${typeName}`;
+        const checkString = checks.join(' || ');
+        const failureValue = config.failureReturnValue;
+        generatedCode += `
+  export function ${funcName}(obj: any): ${typeName} | ${failureValue} {
+    return (${checkString}) ? obj : ${failureValue};
+  }
+  `;
+        console.log(`\t✅ ${typeName} (string literal type)`);
     });
     if (!hasOutput) {
         return;
@@ -457,5 +630,93 @@ function processTypeLiteral(interfaceDeclaration) {
             propertiesCheckCode.push(`typeof(obj.${propName}) === "${type.getText()}"`);
         }
     });
+    return propertiesCheckCode;
+}
+function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config) {
+    var _a;
+    const propertiesCheckCode = [];
+    const typeName = typeAliasDeclaration.getName();
+    // Add to imports for the generated file
+    const file = typeAliasDeclaration.getSourceFile();
+    const list = (_a = importsRef.get(file)) !== null && _a !== void 0 ? _a : new Map();
+    list.set(typeName, typeAliasDeclaration.isDefaultExport());
+    importsRef.set(file, list);
+    const type = typeAliasDeclaration.getType();
+    // Handle intersection types (e.g., type Point3D = Point & { z: number })
+    if (type.isIntersection()) {
+        type.getIntersectionTypes().forEach((intersectedType) => {
+            const props = intersectedType.getProperties();
+            props.forEach((prop) => {
+                const propType = prop.getTypeAtLocation(typeAliasDeclaration);
+                const propName = prop.getName();
+                // Skip optional properties, any types, and generic types
+                if (propType.isAny() || propType.getTypeArguments().length > 0) {
+                    return;
+                }
+                const isNullable = propType.isNull() || propType.isNullable();
+                const isStringLiteral = propType.isStringLiteral();
+                const isStringUnion = propType.isUnion() && propType.getUnionTypes().every(t => t.isStringLiteral());
+                if (isNullable) {
+                    propertiesCheckCode.push(`(typeof(obj.${propName}) === "${propType.getText()}" || obj.${propName} === null)`);
+                }
+                else if (isStringLiteral) {
+                    propertiesCheckCode.push(`obj.${propName} === ${propType.getText()}`);
+                }
+                else if (isStringUnion) {
+                    const checks = propType.getUnionTypes()
+                        .map(t => `obj.${propName} === ${t.getText()}`)
+                        .join(' || ');
+                    propertiesCheckCode.push(`(${checks})`);
+                }
+                else if (propType.isString() || propType.isNumber() || propType.isBoolean()) {
+                    propertiesCheckCode.push(`typeof(obj.${propName}) === "${propType.getText()}"`);
+                }
+                else {
+                    // For complex types, just check existence
+                    propertiesCheckCode.push(`typeof(obj.${propName}) !== "undefined"`);
+                }
+            });
+        });
+    }
+    else {
+        // Regular object type
+        const properties = type.getProperties();
+        properties.forEach((prop) => {
+            const propType = prop.getTypeAtLocation(typeAliasDeclaration);
+            const propName = prop.getName();
+            // Skip optional properties, any types, and generic types
+            if (propType.isAny() || propType.getTypeArguments().length > 0) {
+                return;
+            }
+            const isNullable = propType.isNull() || propType.isNullable();
+            const isStringLiteral = propType.isStringLiteral();
+            const isStringUnion = propType.isUnion() && propType.getUnionTypes().every(t => t.isStringLiteral());
+            // Check if it's a method
+            const callSignatures = propType.getCallSignatures();
+            if (callSignatures.length > 0) {
+                propertiesCheckCode.push(`typeof(obj.${propName}) === "function"`);
+            }
+            else if (isNullable) {
+                propertiesCheckCode.push(`(typeof(obj.${propName}) === "${propType.getText()}" || obj.${propName} === null)`);
+            }
+            else if (isStringLiteral) {
+                propertiesCheckCode.push(`obj.${propName} === ${propType.getText()}`);
+            }
+            else if (isStringUnion) {
+                const checks = propType.getUnionTypes()
+                    .map(t => `obj.${propName} === ${t.getText()}`)
+                    .join(' || ');
+                propertiesCheckCode.push(`(${checks})`);
+            }
+            else if (propType.isString() || propType.isNumber() || propType.isBoolean()) {
+                propertiesCheckCode.push(`typeof(obj.${propName}) === "${propType.getText()}"`);
+            }
+            else {
+                // For complex types, just check existence
+                propertiesCheckCode.push(`typeof(obj.${propName}) !== "undefined"`);
+            }
+        });
+    }
+    console.log(`\t✅ ${typeName} (type)`);
     return propertiesCheckCode;
 }

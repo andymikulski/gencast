@@ -3,6 +3,6 @@
 import type { IGun } from './Gun';
 
   export function CastToGun(obj: any): IGun | null {
-    return (obj != null && typeof(obj.caliber) === "number" && typeof(obj.manufacturer) === "string" && typeof(obj.ammoCapacity) === "number") ? obj : null;
+    return (obj !== null && obj !== undefined && typeof(obj.caliber) === "number" && typeof(obj.manufacturer) === "string" && typeof(obj.ammoCapacity) === "number") ? obj : null;
   }
   
