@@ -4,6 +4,6 @@ import { CastToGun } from './Gun.gen';
 import type { IPistol } from './Pistol';
 
   export function CastToPistol(obj: any): IPistol | null {
-    return (obj !== null && obj !== undefined && CastToGun(obj) !== null && typeof(obj.hasManualSafety) === "boolean" && typeof(obj.gripType) === "string") ? obj : null;
+    return (obj != null && CastToGun(obj) !== null && typeof(obj.hasManualSafety) === "boolean" && typeof(obj.gripType) === "string") ? obj : null;
   }
   

@@ -37,6 +37,8 @@ const DEFAULT_CONFIG = {
     outputEmptyInterfaces: true,
     generateClassCasts: false,
     removeIPrefix: true,
+    failureReturnValue: 'null',
+    strictNullCheck: true,
 };
 /**
  * Attempts to load gencast.config.js from the current working directory.
@@ -96,6 +98,15 @@ module.exports = {
   // Remove 'I' prefix from interface names in function names (default: true)
   // For example, IUser generates CastToUser when true, CastToIUser when false
   removeIPrefix: false,
+
+  // Value returned on cast failure (default: 'null')
+  // Can be 'null' or 'undefined'
+  failureReturnValue: 'null',
+
+  // Use strict equality for null checks (default: false)
+  // true: obj !== null && obj !== undefined
+  // false: obj != null
+  strictNullCheck: true,
 };
 `;
     try {
@@ -191,12 +202,16 @@ function generateCodegenFile(sourceFile, config) {
         const fullGenString = fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
         // Since the cast functions accept 'any' as a param, we need to double check the possibility
         // that the input is null/undefined
-        compiledPropChecks.unshift('obj !== null && obj !== undefined');
+        const nullCheck = config.strictNullCheck
+            ? 'obj !== null && obj !== undefined'
+            : 'obj != null';
+        compiledPropChecks.unshift(nullCheck);
         const funcName = `${config.funcPrefix}${removeIPrefixMaybe(interfaceName, config.removeIPrefix)}`;
         const checks = compiledPropChecks.join(' && ');
+        const failureValue = config.failureReturnValue;
         generatedCode += `
-  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | null {
-    return (${checks}) ? obj : null;
+  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
+    return (${checks}) ? obj : ${failureValue};
   }
   `;
     });
@@ -227,9 +242,10 @@ function generateCodegenFile(sourceFile, config) {
         const shortGenString = shortGenerics.length > 0 ? `<${shortGenerics.join(', ')}>` : '';
         const fullGenString = fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
         const funcName = `${config.funcPrefix}${className}`;
+        const failureValue = config.failureReturnValue;
         generatedCode += `
-  export function ${funcName}${fullGenString}(obj: any): ${className}${shortGenString} | null {
-    return (obj instanceof ${className}) ? obj : null;
+  export function ${funcName}${fullGenString}(obj: any): ${className}${shortGenString} | ${failureValue} {
+    return (obj instanceof ${className}) ? obj : ${failureValue};
   }
   `;
         console.log(`\t✅ ${className} (class)`);
@@ -347,7 +363,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                     genFunctionImportsRef.set(baseFile, funcSet);
                 }
                 // If in the same file, no import needed - the function will be in the same generated file
-                propertiesCheckCode.push(`${baseFuncName}(obj) !== null`);
+                propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
             }
         });
     }

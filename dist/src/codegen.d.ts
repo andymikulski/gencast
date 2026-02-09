@@ -70,6 +70,20 @@ export interface GenCastConfig {
      * @default true
      */
     removeIPrefix?: boolean;
+    /**
+     * The value returned when a cast fails.
+     * Can be 'null' or 'undefined'.
+     *
+     * @default 'null'
+     */
+    failureReturnValue?: 'null' | 'undefined';
+    /**
+     * If `true`, uses strict equality checks for null/undefined (obj !== null && obj !== undefined).
+     * If `false`, uses loose equality check (obj != null) which is faster and more concise.
+     *
+     * @default false
+     */
+    strictNullCheck?: boolean;
 }
 /**
  * Attempts to load gencast.config.js from the current working directory.

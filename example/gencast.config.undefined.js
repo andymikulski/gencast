@@ -8,6 +8,5 @@ module.exports = {
   generateClassCasts: false,
   requireIPrefix: false,
   removeIPrefix: true,
-  failureReturnValue: 'null',
-  strictNullCheck: true,
+  failureReturnValue: 'undefined',
 };

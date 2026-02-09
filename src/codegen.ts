@@ -90,6 +90,22 @@ export interface GenCastConfig {
    * @default true
    */
   removeIPrefix?: boolean;
+
+  /**
+   * The value returned when a cast fails.
+   * Can be 'null' or 'undefined'.
+   *
+   * @default 'null'
+   */
+  failureReturnValue?: 'null' | 'undefined';
+
+  /**
+   * If `true`, uses strict equality checks for null/undefined (obj !== null && obj !== undefined).
+   * If `false`, uses loose equality check (obj != null) which is faster and more concise.
+   *
+   * @default false
+   */
+  strictNullCheck?: boolean;
 }
 
 // Simple object containing a bunch of util functions.
@@ -117,6 +133,8 @@ const DEFAULT_CONFIG: Required<GenCastConfig> = {
   outputEmptyInterfaces: true,
   generateClassCasts: false,
   removeIPrefix: true,
+  failureReturnValue: 'null',
+  strictNullCheck: true,
 };
 
 /**
@@ -181,6 +199,15 @@ module.exports = {
   // Remove 'I' prefix from interface names in function names (default: true)
   // For example, IUser generates CastToUser when true, CastToIUser when false
   removeIPrefix: false,
+
+  // Value returned on cast failure (default: 'null')
+  // Can be 'null' or 'undefined'
+  failureReturnValue: 'null',
+
+  // Use strict equality for null checks (default: false)
+  // true: obj !== null && obj !== undefined
+  // false: obj != null
+  strictNullCheck: true,
 };
 `;
 
@@ -305,14 +332,18 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
     // Since the cast functions accept 'any' as a param, we need to double check the possibility
     // that the input is null/undefined
-    compiledPropChecks.unshift('obj !== null && obj !== undefined');
+    const nullCheck = config.strictNullCheck
+      ? 'obj !== null && obj !== undefined'
+      : 'obj != null';
+    compiledPropChecks.unshift(nullCheck);
 
     const funcName = `${config.funcPrefix}${removeIPrefixMaybe(interfaceName, config.removeIPrefix)}`;
     const checks = compiledPropChecks.join(' && ');
+    const failureValue = config.failureReturnValue;
 
     generatedCode += `
-  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | null {
-    return (${checks}) ? obj : null;
+  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
+    return (${checks}) ? obj : ${failureValue};
   }
   `;
   });
@@ -351,10 +382,11 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
       fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
 
     const funcName = `${config.funcPrefix}${className}`;
+    const failureValue = config.failureReturnValue;
 
     generatedCode += `
-  export function ${funcName}${fullGenString}(obj: any): ${className}${shortGenString} | null {
-    return (obj instanceof ${className}) ? obj : null;
+  export function ${funcName}${fullGenString}(obj: any): ${className}${shortGenString} | ${failureValue} {
+    return (obj instanceof ${className}) ? obj : ${failureValue};
   }
   `;
 
@@ -500,7 +532,7 @@ function processInterface(
         }
         // If in the same file, no import needed - the function will be in the same generated file
 
-        propertiesCheckCode.push(`${baseFuncName}(obj) !== null`);
+        propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
       }
     });
   } else {
