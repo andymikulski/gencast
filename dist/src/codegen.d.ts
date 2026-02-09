@@ -117,6 +117,12 @@ export declare function loadConfig(): GenCastConfig;
  */
 export declare function initConfig(): boolean;
 /**
+ * Updates VS Code workspace settings to exclude generated files.
+ * Reads the genFileExt from the config and adds exclusion patterns.
+ * @returns true if the settings were updated successfully
+ */
+export declare function updateVSCodeSettings(): boolean;
+/**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
  */

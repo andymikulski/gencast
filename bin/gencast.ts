@@ -7,7 +7,7 @@
  * It scans your TypeScript project and creates .gen.ts files with CastTo* functions.
  */
 
-import { generateCodegen, loadConfig, initConfig } from '../src/codegen';
+import { generateCodegen, loadConfig, initConfig, updateVSCodeSettings } from '../src/codegen';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -16,6 +16,9 @@ const command = args[0];
 if (command === 'init') {
   // Generate a gencast.config.js file
   initConfig();
+} else if (command === 'vscode') {
+  // Update VS Code workspace settings
+  updateVSCodeSettings();
 } else if (command === '--help' || command === '-h') {
   // Display help
   console.log(`
@@ -24,6 +27,7 @@ GenCast - Runtime type casting for TypeScript interfaces
 Usage:
   gencast           Generate casting functions for your interfaces
   gencast init      Create a gencast.config.js configuration file
+  gencast vscode    Update VS Code settings to exclude generated files
   gencast --help    Show this help message
 `);
 } else if (command) {

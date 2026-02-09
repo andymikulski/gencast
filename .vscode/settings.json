@@ -3,5 +3,14 @@
     "activityBar.background": "#322F01",
     "titleBar.activeBackground": "#474101",
     "titleBar.activeForeground": "#FEFBD2"
+  },
+  "files.exclude": {
+    "**/*.gen.ts": true
+  },
+  "search.exclude": {
+    "**/*.gen.ts": true
+  },
+  "files.watcherExclude": {
+    "**/*.gen.ts": true
   }
 }

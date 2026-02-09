@@ -15,6 +15,10 @@ if (command === 'init') {
     // Generate a gencast.config.js file
     (0, codegen_1.initConfig)();
 }
+else if (command === 'vscode') {
+    // Update VS Code workspace settings
+    (0, codegen_1.updateVSCodeSettings)();
+}
 else if (command === '--help' || command === '-h') {
     // Display help
     console.log(`
@@ -23,6 +27,7 @@ GenCast - Runtime type casting for TypeScript interfaces
 Usage:
   gencast           Generate casting functions for your interfaces
   gencast init      Create a gencast.config.js configuration file
+  gencast vscode    Update VS Code settings to exclude generated files
   gencast --help    Show this help message
 `);
 }

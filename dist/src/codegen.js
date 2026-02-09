@@ -11,6 +11,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadConfig = loadConfig;
 exports.initConfig = initConfig;
+exports.updateVSCodeSettings = updateVSCodeSettings;
 exports.generateCodegen = generateCodegen;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -132,6 +133,73 @@ module.exports = {
     }
     catch (error) {
         console.error(`Error: Failed to create gencast.config.js: ${error}`);
+        return false;
+    }
+}
+/**
+ * Updates VS Code workspace settings to exclude generated files.
+ * Reads the genFileExt from the config and adds exclusion patterns.
+ * @returns true if the settings were updated successfully
+ */
+function updateVSCodeSettings() {
+    const vscodeDirPath = path_1.default.resolve(process.cwd(), '.vscode');
+    const settingsPath = path_1.default.resolve(vscodeDirPath, 'settings.json');
+    // Load config to get genFileExt
+    const userConfig = loadConfig();
+    const config = {
+        ...DEFAULT_CONFIG,
+        ...userConfig,
+    };
+    const genFileExt = config.genFileExt;
+    const pattern = `**/*${genFileExt}`;
+    // Create .vscode directory if it doesn't exist
+    if (!fs_1.default.existsSync(vscodeDirPath)) {
+        try {
+            fs_1.default.mkdirSync(vscodeDirPath, { recursive: true });
+        }
+        catch (error) {
+            console.error(`Error: Failed to create .vscode directory: ${error}`);
+            return false;
+        }
+    }
+    // Load existing settings or start with empty object
+    let settings = {};
+    if (fs_1.default.existsSync(settingsPath)) {
+        try {
+            const content = fs_1.default.readFileSync(settingsPath, 'utf8');
+            settings = JSON.parse(content);
+        }
+        catch (error) {
+            console.error(`Error: Failed to parse existing .vscode/settings.json: ${error}`);
+            return false;
+        }
+    }
+    // Update exclusion patterns
+    if (!settings['files.exclude']) {
+        settings['files.exclude'] = {};
+    }
+    if (!settings['search.exclude']) {
+        settings['search.exclude'] = {};
+    }
+    if (!settings['files.watcherExclude']) {
+        settings['files.watcherExclude'] = {};
+    }
+    settings['files.exclude'][pattern] = true;
+    settings['search.exclude'][pattern] = true;
+    settings['files.watcherExclude'][pattern] = true;
+    // Write updated settings
+    try {
+        fs_1.default.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+        console.log(`✅ Updated .vscode/settings.json`);
+        console.log(`   Excluded pattern: ${pattern}`);
+        console.log('\nGenerated files will now be hidden from:');
+        console.log('  • File Explorer (files.exclude)');
+        console.log('  • Search Results (search.exclude)');
+        console.log('  • File Watcher (files.watcherExclude)');
+        return true;
+    }
+    catch (error) {
+        console.error(`Error: Failed to write .vscode/settings.json: ${error}`);
         return false;
     }
 }

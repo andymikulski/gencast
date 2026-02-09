@@ -263,6 +263,78 @@ module.exports = {
 }
 
 /**
+ * Updates VS Code workspace settings to exclude generated files.
+ * Reads the genFileExt from the config and adds exclusion patterns.
+ * @returns true if the settings were updated successfully
+ */
+export function updateVSCodeSettings(): boolean {
+  const vscodeDirPath = path.resolve(process.cwd(), '.vscode');
+  const settingsPath = path.resolve(vscodeDirPath, 'settings.json');
+
+  // Load config to get genFileExt
+  const userConfig = loadConfig();
+  const config: Required<GenCastConfig> = {
+    ...DEFAULT_CONFIG,
+    ...userConfig,
+  };
+
+  const genFileExt = config.genFileExt;
+  const pattern = `**/*${genFileExt}`;
+
+  // Create .vscode directory if it doesn't exist
+  if (!fs.existsSync(vscodeDirPath)) {
+    try {
+      fs.mkdirSync(vscodeDirPath, { recursive: true });
+    } catch (error) {
+      console.error(`Error: Failed to create .vscode directory: ${error}`);
+      return false;
+    }
+  }
+
+  // Load existing settings or start with empty object
+  let settings: Record<string, any> = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      const content = fs.readFileSync(settingsPath, 'utf8');
+      settings = JSON.parse(content);
+    } catch (error) {
+      console.error(`Error: Failed to parse existing .vscode/settings.json: ${error}`);
+      return false;
+    }
+  }
+
+  // Update exclusion patterns
+  if (!settings['files.exclude']) {
+    settings['files.exclude'] = {};
+  }
+  if (!settings['search.exclude']) {
+    settings['search.exclude'] = {};
+  }
+  if (!settings['files.watcherExclude']) {
+    settings['files.watcherExclude'] = {};
+  }
+
+  settings['files.exclude'][pattern] = true;
+  settings['search.exclude'][pattern] = true;
+  settings['files.watcherExclude'][pattern] = true;
+
+  // Write updated settings
+  try {
+    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+    console.log(`✅ Updated .vscode/settings.json`);
+    console.log(`   Excluded pattern: ${pattern}`);
+    console.log('\nGenerated files will now be hidden from:');
+    console.log('  • File Explorer (files.exclude)');
+    console.log('  • Search Results (search.exclude)');
+    console.log('  • File Watcher (files.watcherExclude)');
+    return true;
+  } catch (error) {
+    console.error(`Error: Failed to write .vscode/settings.json: ${error}`);
+    return false;
+  }
+}
+
+/**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
  */
