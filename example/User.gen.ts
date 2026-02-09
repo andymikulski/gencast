@@ -7,7 +7,7 @@ import type { IUser, IAdmin, IGuest } from './User';
   }
   
   export function CastToAdmin(obj: any): IAdmin | null {
-    return (obj !== null && obj !== undefined && typeof(obj.id) === "number" && typeof(obj.name) === "string" && typeof(obj.email) === "string" && typeof(obj.isActive) === "boolean" && obj.role === "admin") ? obj : null;
+    return (obj !== null && obj !== undefined && CastToUser(obj) !== null && obj.role === "admin") ? obj : null;
   }
   
   export function CastToGuest(obj: any): IGuest | null {

@@ -130,7 +130,7 @@ function generateCodegen(userConfig = {}) {
     console.log('\nDone generating interface casters\n');
 }
 function generateCodegenFile(sourceFile, config) {
-    var _a, _b;
+    var _a, _b, _c;
     // If this function is called on a previously-generated file, ignore it
     if (sourceFile.getBaseName().endsWith(config.genFileExt)) {
         return;
@@ -158,12 +158,14 @@ function generateCodegenFile(sourceFile, config) {
     // Map<SourceFile, Map<name, isDefault>>
     let typeImports = new Map();
     let valueImports = new Map();
+    // Track cast function imports from other generated files when preferReuseCastFunctions is true
+    let genFunctionImports = new Map();
     let generatedCode = '';
     let hasOutput = false;
     // for each interface found in this source file...
     interfaces.forEach((int) => {
         const interfaceName = int.getName();
-        var compiledPropChecks = processInterface(int, typeImports, config);
+        var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config);
         if (compiledPropChecks.length === 0) {
             const color = config.outputEmptyInterfaces ? '🟨' : '❌';
             console.warn(`\t${color} No prop checks found for interface "${interfaceName}"`);
@@ -236,10 +238,28 @@ function generateCodegenFile(sourceFile, config) {
         return;
     }
     let importString = '';
+    // Generate cast function imports from other generated files (when preferReuseCastFunctions is true)
+    const genFunctionImportItems = genFunctionImports.entries();
+    let genFuncValue;
+    while ((genFuncValue = (_a = genFunctionImportItems.next()) === null || _a === void 0 ? void 0 : _a.value)) {
+        const [file, funcNames] = genFuncValue;
+        if (funcNames.size === 0)
+            continue;
+        // Generate the path to the .gen.ts file
+        // Get the path FROM current source file TO the base file
+        const relativePathBase = sourceFile.getRelativePathAsModuleSpecifierTo(file);
+        // Append the gen file extension marker (without .ts) to the module specifier
+        // E.g., './Gun' + '.gen' = './Gun.gen'
+        const genExtWithoutTs = config.genFileExt.replace(/\.ts$/, '');
+        const relativePathGen = relativePathBase + genExtWithoutTs;
+        const funcArray = Array.from(funcNames);
+        importString += `import { ${funcArray.join(', ')} } from '${relativePathGen}';
+`;
+    }
     // Generate type imports (for interfaces)
     const typeImportItems = typeImports.entries();
     let typeValue;
-    while ((typeValue = (_a = typeImportItems.next()) === null || _a === void 0 ? void 0 : _a.value)) {
+    while ((typeValue = (_b = typeImportItems.next()) === null || _b === void 0 ? void 0 : _b.value)) {
         const [file, members] = typeValue;
         const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
         const defaultImports = [];
@@ -264,7 +284,7 @@ function generateCodegenFile(sourceFile, config) {
     // Generate value imports (for classes)
     const valueImportItems = valueImports.entries();
     let valueValue;
-    while ((valueValue = (_b = valueImportItems.next()) === null || _b === void 0 ? void 0 : _b.value)) {
+    while ((valueValue = (_c = valueImportItems.next()) === null || _c === void 0 ? void 0 : _c.value)) {
         const [file, members] = valueValue;
         const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
         const defaultImports = [];
@@ -293,7 +313,7 @@ function generateCodegenFile(sourceFile, config) {
 function removeIPrefixMaybe(val, shouldRemove) {
     return shouldRemove && val.charAt(0) === 'I' ? val.slice(1) : val;
 }
-function processInterface(interfaceDeclaration, importsRef, config, isInherited = false) {
+function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config, isInherited = false) {
     var _a;
     const propertiesCheckCode = [];
     const interfaceName = interfaceDeclaration.getName();
@@ -312,10 +332,22 @@ function processInterface(interfaceDeclaration, importsRef, config, isInherited 
     // IF TRYING TO REUSE EXISTING CAST FUNCTIONS...
     if (config.preferReuseCastFunctions) {
         interfaceDeclaration.getBaseDeclarations().forEach((i) => {
+            var _a;
             // Only process if it's actually an InterfaceDeclaration
             if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
                 const baseInterface = i;
-                propertiesCheckCode.push(`${config.funcPrefix}${removeIPrefixMaybe(baseInterface.getName(), config.removeIPrefix)}(obj) !== null`);
+                const baseName = baseInterface.getName();
+                const baseFuncName = `${config.funcPrefix}${removeIPrefixMaybe(baseName, config.removeIPrefix)}`;
+                // Check if the base interface is in a different file
+                const baseFile = baseInterface.getSourceFile();
+                if (baseFile.getFilePath() !== currentSourceFile.getFilePath()) {
+                    // Need to import the cast function from the other generated file
+                    const funcSet = (_a = genFunctionImportsRef.get(baseFile)) !== null && _a !== void 0 ? _a : new Set();
+                    funcSet.add(baseFuncName);
+                    genFunctionImportsRef.set(baseFile, funcSet);
+                }
+                // If in the same file, no import needed - the function will be in the same generated file
+                propertiesCheckCode.push(`${baseFuncName}(obj) !== null`);
             }
         });
     }
@@ -330,7 +362,7 @@ function processInterface(interfaceDeclaration, importsRef, config, isInherited 
             }
             else if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
                 // Only process as InterfaceDeclaration if it actually is one
-                const subProps = processInterface(i, importsRef, config, true);
+                const subProps = processInterface(i, importsRef, genFunctionImportsRef, currentSourceFile, config, true);
                 propertiesCheckCode.push(...subProps);
             }
             // Skip other base declaration types (e.g., type references like Partial<T>)

@@ -260,6 +260,8 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   // Map<SourceFile, Map<name, isDefault>>
   let typeImports = new Map<SourceFile, Map<string, boolean>>();
   let valueImports = new Map<SourceFile, Map<string, boolean>>();
+  // Track cast function imports from other generated files when preferReuseCastFunctions is true
+  let genFunctionImports = new Map<SourceFile, Set<string>>();
   let generatedCode = '';
   let hasOutput = false;
 
@@ -267,7 +269,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   interfaces.forEach((int) => {
     const interfaceName = int.getName();
 
-    var compiledPropChecks = processInterface(int, typeImports, config);
+    var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config);
 
     if (compiledPropChecks.length === 0) {
       const color = config.outputEmptyInterfaces ? '🟨' : '❌';
@@ -365,6 +367,26 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
   let importString = '';
 
+  // Generate cast function imports from other generated files (when preferReuseCastFunctions is true)
+  const genFunctionImportItems = genFunctionImports.entries();
+  let genFuncValue: [SourceFile, Set<string>];
+  while ((genFuncValue = genFunctionImportItems.next()?.value!)) {
+    const [file, funcNames] = genFuncValue;
+    if (funcNames.size === 0) continue;
+
+    // Generate the path to the .gen.ts file
+    // Get the path FROM current source file TO the base file
+    const relativePathBase = sourceFile.getRelativePathAsModuleSpecifierTo(file);
+    // Append the gen file extension marker (without .ts) to the module specifier
+    // E.g., './Gun' + '.gen' = './Gun.gen'
+    const genExtWithoutTs = config.genFileExt.replace(/\.ts$/, '');
+    const relativePathGen = relativePathBase + genExtWithoutTs;
+
+    const funcArray = Array.from(funcNames);
+    importString += `import { ${funcArray.join(', ')} } from '${relativePathGen}';
+`;
+  }
+
   // Generate type imports (for interfaces)
   const typeImportItems = typeImports.entries();
   let typeValue: [SourceFile, Map<string, boolean>];
@@ -436,6 +458,8 @@ function removeIPrefixMaybe(val: string, shouldRemove: boolean) {
 function processInterface(
   interfaceDeclaration: InterfaceDeclaration,
   importsRef: Map<SourceFile, Map<string, boolean>>,
+  genFunctionImportsRef: Map<SourceFile, Set<string>>,
+  currentSourceFile: SourceFile,
   config: Required<GenCastConfig>,
   isInherited: boolean = false
 ): string[] {
@@ -463,9 +487,20 @@ function processInterface(
       // Only process if it's actually an InterfaceDeclaration
       if (i.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
         const baseInterface = i as InterfaceDeclaration;
-        propertiesCheckCode.push(
-          `${config.funcPrefix}${removeIPrefixMaybe(baseInterface.getName()!, config.removeIPrefix)}(obj) !== null`
-        );
+        const baseName = baseInterface.getName()!;
+        const baseFuncName = `${config.funcPrefix}${removeIPrefixMaybe(baseName, config.removeIPrefix)}`;
+
+        // Check if the base interface is in a different file
+        const baseFile = baseInterface.getSourceFile();
+        if (baseFile.getFilePath() !== currentSourceFile.getFilePath()) {
+          // Need to import the cast function from the other generated file
+          const funcSet = genFunctionImportsRef.get(baseFile) ?? new Set<string>();
+          funcSet.add(baseFuncName);
+          genFunctionImportsRef.set(baseFile, funcSet);
+        }
+        // If in the same file, no import needed - the function will be in the same generated file
+
+        propertiesCheckCode.push(`${baseFuncName}(obj) !== null`);
       }
     });
   } else {
@@ -482,6 +517,8 @@ function processInterface(
         const subProps = processInterface(
           <InterfaceDeclaration>i,
           importsRef,
+          genFunctionImportsRef,
+          currentSourceFile,
           config,
           true
         );
