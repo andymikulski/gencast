@@ -399,8 +399,17 @@ export function generateCodegen(userConfig: GenCastConfig = {}): void {
   const project = new Project();
   project.addSourceFilesFromTsConfig(tsconfigPath);
 
+  const allSourceFiles = project.getSourceFiles();
+
+  // Pre-compute the gen-import dependency graph so we can detect cycles when
+  // preferReuseCastFunctions is enabled.  When disabled the graph is empty and all
+  // cyclic-dep sets will also be empty, so the extra work is zero.
+  const genImportGraph = config.preferReuseCastFunctions
+    ? computeGenImportGraph(allSourceFiles, config)
+    : new Map<string, Set<string>>();
+
   // Process each file and output the relevant file
-  project.getSourceFiles().forEach((file) => generateCodegenFile(file, config));
+  allSourceFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph));
 
   // Optionally write the shared utility casts file
   if (config.generateUtilityCasts) {
@@ -441,7 +450,112 @@ export function CastToClass<T>(obj: any, ctor: new (...args: any[]) => T): T | $
   console.log(`\n📄 gencast-utils: CastToClass`);
 }
 
-function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastConfig>) {
+// ---------------------------------------------------------------------------
+// Cycle-detection helpers for preferReuseCastFunctions
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds a dependency graph: for each source file, which other source file paths would
+ * its generated file need to import cast functions from (under preferReuseCastFunctions).
+ */
+function computeGenImportGraph(
+  sourceFiles: SourceFile[],
+  config: Required<GenCastConfig>
+): Map<string, Set<string>> {
+  const graph = new Map<string, Set<string>>();
+  for (const sf of sourceFiles) {
+    const sfPath = sf.getFilePath();
+    const deps = new Set<string>();
+    graph.set(sfPath, deps);
+
+    sf.getInterfaces()
+      .filter((iface) => iface.isExported())
+      .forEach((iface) => {
+        // Inheritance — would call the base's cast function
+        iface.getBaseDeclarations().forEach((base) => {
+          if (base.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
+            const baseFilePath = (base as InterfaceDeclaration).getSourceFile().getFilePath();
+            if (baseFilePath !== sfPath) deps.add(baseFilePath);
+          }
+        });
+        // Complex property types — would call the property type's cast function
+        iface.getProperties().forEach((prop) => {
+          collectComplexTypeDep(prop.getType(), sfPath, deps);
+        });
+      });
+
+    if (config.generateTypeCasts) {
+      sf.getTypeAliases()
+        .filter((ta) => ta.isExported())
+        .forEach((ta) => {
+          ta.getType().getProperties().forEach((prop) => {
+            collectComplexTypeDep(prop.getTypeAtLocation(ta), sfPath, deps);
+          });
+        });
+    }
+  }
+  return graph;
+}
+
+/** Records the source-file path of `propType`'s named declaration in `deps` if it is cross-file. */
+function collectComplexTypeDep(
+  propType: Type<ts.Type>,
+  currentFilePath: string,
+  deps: Set<string>
+): void {
+  if (!propType.isObject()) return;
+  const symbol = propType.getAliasSymbol() ?? propType.getSymbol();
+  const decl = (symbol?.getDeclarations() ?? []).find(
+    (d) =>
+      d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+      d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+  );
+  if (decl) {
+    const declFilePath = decl.getSourceFile().getFilePath();
+    if (declFilePath !== currentFilePath) deps.add(declFilePath);
+  }
+}
+
+/** Returns `true` if there is a directed path from `from` to `to` in `graph`. */
+function canReachInGraph(
+  graph: Map<string, Set<string>>,
+  from: string,
+  to: string,
+  visited: Set<string>
+): boolean {
+  if (from === to) return true;
+  if (visited.has(from)) return false;
+  visited.add(from);
+  for (const dep of graph.get(from) ?? new Set<string>()) {
+    if (canReachInGraph(graph, dep, to, visited)) return true;
+  }
+  return false;
+}
+
+/**
+ * Returns the set of source file paths that would introduce a circular dependency if
+ * `sourceFilePath`'s generated file were to import cast functions from them.
+ *
+ * A file is "cyclic" with respect to `sourceFilePath` when it can transitively reach
+ * `sourceFilePath` in the gen-import dependency graph — meaning the two files would
+ * mutually import each other's generated files.
+ */
+function findCyclicGenImports(
+  graph: Map<string, Set<string>>,
+  sourceFilePath: string
+): Set<string> {
+  const cyclic = new Set<string>();
+  for (const [node] of graph) {
+    if (node !== sourceFilePath && canReachInGraph(graph, node, sourceFilePath, new Set())) {
+      cyclic.add(node);
+    }
+  }
+  return cyclic;
+}
+
+// ---------------------------------------------------------------------------
+
+function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastConfig>, genImportGraph: Map<string, Set<string>>) {
   // If this function is called on a previously-generated file, ignore it
   if (sourceFile.getBaseName().endsWith(config.genFileExt)) {
     return;
@@ -524,6 +638,17 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   }
   console.log('📃 ' + sourceFile.getBaseName());
 
+  // Compute which source files would create circular dependencies if we imported their
+  // generated cast functions from this file's gen file.
+  const cyclicFilePaths = config.preferReuseCastFunctions
+    ? findCyclicGenImports(genImportGraph, sourceFile.getFilePath())
+    : new Set<string>();
+
+  if (cyclicFilePaths.size > 0) {
+    const names = [...cyclicFilePaths].map((p) => path.basename(p)).join(', ');
+    console.log(`\t⚠️  Cyclic gen-import detected with: ${names} — falling back to inline checks for those types.`);
+  }
+
   // Map<SourceFile, Map<name, isDefault>>
   let typeImports = new Map<SourceFile, Map<string, boolean>>();
   let valueImports = new Map<SourceFile, Map<string, boolean>>();
@@ -536,7 +661,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   interfaces.forEach((int) => {
     const interfaceName = int.getName();
 
-    var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config);
+    var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config, false, cyclicFilePaths);
 
     if (compiledPropChecks.length === 0) {
       const color = config.outputEmptyInterfaces ? '🚸' : '❌';
@@ -640,7 +765,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
       return;
     }
 
-    var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config);
+    var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config, cyclicFilePaths);
 
     if (compiledPropChecks.length === 0) {
       const color = config.outputEmptyInterfaces ? '🟨' : '❌';
@@ -872,7 +997,8 @@ function processInterface(
   genFunctionImportsRef: Map<SourceFile, Set<string>>,
   currentSourceFile: SourceFile,
   config: Required<GenCastConfig>,
-  isInherited: boolean = false
+  isInherited: boolean = false,
+  cyclicFilePaths: Set<string> = new Set()
 ): string[] {
   const propertiesCheckCode: string[] = [];
 
@@ -898,20 +1024,39 @@ function processInterface(
       // Only process if it's actually an InterfaceDeclaration
       if (i.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
         const baseInterface = i as InterfaceDeclaration;
-        const baseName = baseInterface.getName()!;
-        const baseFuncName = `${config.funcPrefix}${removeIPrefixMaybe(baseName, config.removeIPrefix)}`;
-
-        // Check if the base interface is in a different file
         const baseFile = baseInterface.getSourceFile();
-        if (baseFile.getFilePath() !== currentSourceFile.getFilePath()) {
-          // Need to import the cast function from the other generated file
-          const funcSet = genFunctionImportsRef.get(baseFile) ?? new Set<string>();
-          funcSet.add(baseFuncName);
-          genFunctionImportsRef.set(baseFile, funcSet);
-        }
-        // If in the same file, no import needed - the function will be in the same generated file
+        const isCrossFile = baseFile.getFilePath() !== currentSourceFile.getFilePath();
+        const wouldCycle = isCrossFile && cyclicFilePaths.has(baseFile.getFilePath());
 
-        propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
+        if (wouldCycle) {
+          // Importing this base's cast function would create a circular dependency between
+          // generated files — fall back to inlining all its property checks instead.
+          const baseName = baseInterface.getName()!;
+          console.log(`\t\t↳ ${interfaceName} extends ${baseName}: inlining (cycle detected)`);
+          const subProps = processInterface(
+            baseInterface,
+            importsRef,
+            genFunctionImportsRef,
+            currentSourceFile,
+            config,
+            true,
+            cyclicFilePaths
+          );
+          propertiesCheckCode.push(...subProps);
+        } else {
+          const baseName = baseInterface.getName()!;
+          const baseFuncName = `${config.funcPrefix}${removeIPrefixMaybe(baseName, config.removeIPrefix)}`;
+
+          if (isCrossFile) {
+            // Need to import the cast function from the other generated file
+            const funcSet = genFunctionImportsRef.get(baseFile) ?? new Set<string>();
+            funcSet.add(baseFuncName);
+            genFunctionImportsRef.set(baseFile, funcSet);
+          }
+          // If in the same file, no import needed - the function will be in the same generated file
+
+          propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
+        }
       }
     });
   } else {
@@ -931,7 +1076,8 @@ function processInterface(
           genFunctionImportsRef,
           currentSourceFile,
           config,
-          true
+          true,
+          cyclicFilePaths
         );
         propertiesCheckCode.push(...subProps);
       }
@@ -1044,7 +1190,8 @@ function generateComplexTypeCheck(
   location: TypeAliasDeclaration,
   genFunctionImportsRef: Map<SourceFile, Set<string>>,
   currentSourceFile: SourceFile,
-  config: Required<GenCastConfig>
+  config: Required<GenCastConfig>,
+  cyclicFilePaths: Set<string> = new Set()
 ): string | null {
   const properties = propType.getProperties();
   if (properties.length === 0) return null;
@@ -1062,15 +1209,22 @@ function generateComplexTypeCheck(
         d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
     );
     if (decl && symbol) {
-      const typeName = symbol.getName();
-      const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
       const declFile = decl.getSourceFile();
-      if (declFile.getFilePath() !== currentSourceFile.getFilePath()) {
-        const funcSet = genFunctionImportsRef.get(declFile) ?? new Set<string>();
-        funcSet.add(funcName);
-        genFunctionImportsRef.set(declFile, funcSet);
+      const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
+      const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
+
+      if (!wouldCycle) {
+        const typeName = symbol.getName();
+        const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+        if (isCrossFile) {
+          const funcSet = genFunctionImportsRef.get(declFile) ?? new Set<string>();
+          funcSet.add(funcName);
+          genFunctionImportsRef.set(declFile, funcSet);
+        }
+        return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
       }
-      return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
+      // wouldCycle === true: fall through to the inline check below
+      console.log(`\t\t↳ ${propRef} (${symbol.getName()}): inlining (cycle detected)`);
     }
   }
 
@@ -1100,7 +1254,8 @@ function processTypeAlias(
   importsRef: Map<SourceFile, Map<string, boolean>>,
   genFunctionImportsRef: Map<SourceFile, Set<string>>,
   currentSourceFile: SourceFile,
-  config: Required<GenCastConfig>
+  config: Required<GenCastConfig>,
+  cyclicFilePaths: Set<string> = new Set()
 ): string[] {
   const propertiesCheckCode: string[] = [];
 
@@ -1147,7 +1302,7 @@ function processTypeAlias(
           propertiesCheckCode.push(`typeof(${propRef}) === "${propType.getText()}"`);
         } else {
           // For complex types, generate a thorough check (or fall back to existence check)
-          const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config);
+          const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
           propertiesCheckCode.push(complexCheck ?? `typeof(${propRef}) !== "undefined"`);
         }
       });
@@ -1196,7 +1351,7 @@ function processTypeAlias(
         propertiesCheckCode.push(`typeof(${propRef}) === "${propType.getText()}"`);
       } else {
         // For complex types, generate a thorough check (or fall back to existence check)
-        const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config);
+        const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
         propertiesCheckCode.push(complexCheck ?? `typeof(${propRef}) !== "undefined"`);
       }
     });
