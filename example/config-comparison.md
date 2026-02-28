@@ -1,13 +1,11 @@
 # GenCast Configuration Options
 
-## Summary of Changes
-
-### 1. `failureReturnValue` (default: `'null'`)
+## `failureReturnValue` (default: `'null'`)
 Controls what value is returned when a cast fails.
 
 **Options:**
-- `'null'` - Returns `null` on failure
-- `'undefined'` - Returns `undefined` on failure
+- `'null'` — Returns `null` on failure
+- `'undefined'` — Returns `undefined` on failure
 
 **Example with `'null'`:**
 ```typescript
@@ -25,14 +23,14 @@ export function CastToUser(obj: any): IUser | undefined {
 
 ---
 
-### 2. `strictNullCheck` (default: `false`)
+## `strictNullCheck` (default: `false`)
 Controls whether to use strict or loose equality for null/undefined checks.
 
 **Options:**
-- `false` - Uses loose equality `obj != null` (faster, more concise, checks both null and undefined)
-- `true` - Uses strict equality `obj !== null && obj !== undefined` (explicit, verbose)
+- `false` — Uses loose equality `obj != null` (faster, more concise, checks both null and undefined)
+- `true` — Uses strict equality `obj !== null && obj !== undefined` (explicit, verbose)
 
-**Example with `strictNullCheck: false` (loose):**
+**Example with `strictNullCheck: false` (default, loose):**
 ```typescript
 export function CastToUser(obj: any): IUser | null {
   return (obj != null && typeof(obj.id) === "number" ...) ? obj : null;
@@ -45,6 +43,60 @@ export function CastToUser(obj: any): IUser | null {
   return (obj !== null && obj !== undefined && typeof(obj.id) === "number" ...) ? obj : null;
 }
 ```
+
+---
+
+## `generateTypeCasts` (default: `false`)
+If `true`, generates cast functions for exported object type aliases.
+```typescript
+export type Point = { x: number; y: number };
+// generates: CastToPoint(obj: any): Point | null
+```
+
+---
+
+## `generatePrimitiveTypeCasts` (default: `false`)
+If `true`, generates cast functions for primitive type aliases.
+```typescript
+export type ID = number;
+// generates: CastToID(obj: any): ID | null  — checks typeof obj === "number"
+```
+
+---
+
+## `generateStringLiteralTypeCasts` (default: `false`)
+If `true`, generates cast functions for string literal union types.
+```typescript
+export type Status = 'active' | 'inactive';
+// generates: CastToStatus(obj: any): Status | null  — validates allowed values
+```
+
+---
+
+## `generateClassCasts` (default: `false`)
+If `true`, generates `instanceof`-based cast functions for exported classes.
+```typescript
+export class MyClass { ... }
+// generates: CastToMyClass(obj: any): MyClass | null  — uses instanceof
+```
+
+---
+
+## `generateUtilityCasts` / `utilityCastsPath`
+When `generateUtilityCasts: true`, a utility file is created with generic helpers:
+```typescript
+// gencast-utils.gen.ts
+export function CastToClass<T>(obj: any, ctor: new (...args: any[]) => T): T | null {
+  return obj instanceof ctor ? obj : null;
+}
+```
+`utilityCastsPath` controls where this file is written (default: `'./gencast-utils.gen.[ext]'`).
+
+---
+
+## `enableWeakMapCaching` (default: `false`)
+If `true`, each generated cast function caches its result per object using a `WeakMap`. Useful when
+the same objects are cast repeatedly in hot code paths.
 
 ---
 
@@ -63,22 +115,28 @@ export function CastToUser(obj: any): IUser | null {
 
 ---
 
-## Configuration Example
+## Full Configuration Example
 
 ```javascript
 /** @type {import('gencast').GenCastConfig} */
 module.exports = {
   tsconfigPath: './tsconfig.json',
-  genFileExt: '.gen.ts',
+  genFileName: '[filename].gen.[ext]',
+  outputLanguage: 'ts',
   funcPrefix: 'CastTo',
-  preferReuseCastFunctions: true,
+  preferReuseCastFunctions: false,
   outputEmptyInterfaces: true,
-  generateClassCasts: false,
   requireIPrefix: false,
   removeIPrefix: true,
-
-  // New options:
-  failureReturnValue: 'null',      // or 'undefined'
-  strictNullCheck: false,           // or true
+  generateClassCasts: false,
+  generateTypeCasts: false,
+  generatePrimitiveTypeCasts: false,
+  generateStringLiteralTypeCasts: false,
+  failureReturnValue: 'null',
+  strictNullCheck: false,
+  includeTupleArrayMethods: false,
+  generateUtilityCasts: false,
+  utilityCastsPath: './gencast-utils.gen.[ext]',
+  enableWeakMapCaching: false,
 };
 ```

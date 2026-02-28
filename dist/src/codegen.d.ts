@@ -14,12 +14,26 @@ export interface GenCastConfig {
      */
     tsconfigPath?: string;
     /**
-     * The extension for generated files.
-     * For instance, if the extension is `.gen.ts`, then the generated file for
-     * `MyInterface.ts` will be `MyInterface.gen.ts`.
-     * @default '.gen.ts'
+     * A filename template for generated files, using `[filename]` and `[ext]` placeholders.
+     *
+     * - `[filename]` is replaced with the source file's base name (without extension).
+     * - `[ext]` is replaced with `ts` or `js` based on `outputLanguage`.
+     *
+     * For example, `'[filename].gen.[ext]'` produces `MyInterface.gen.ts` (or `.gen.js`).
+     *
+     * @default '[filename].gen.[ext]'
      */
-    genFileExt?: string;
+    genFileName?: string;
+    /**
+     * Controls whether the generated output is TypeScript (`.ts`) or plain JavaScript (`.js`).
+     *
+     * - `'ts'` — generates typed TypeScript with full type annotations, generics, and `import type` statements.
+     * - `'js'` — generates plain JavaScript with no type annotations. Type imports are omitted; only
+     *   value imports required for `instanceof` checks (class casts) are kept.
+     *
+     * @default 'ts'
+     */
+    outputLanguage?: 'ts' | 'js';
     /**
      * The prefix for all generated functions.
      * For instance, if the prefix is `CastTo`, then the generated function for
@@ -128,9 +142,10 @@ export interface GenCastConfig {
     generateUtilityCasts?: boolean;
     /**
      * The path (relative to cwd) where the utility casts file is written when
-     * `generateUtilityCasts` is `true`.
+     * `generateUtilityCasts` is `true`. Supports the `[ext]` placeholder, which
+     * is replaced with `ts` or `js` based on `outputLanguage`.
      *
-     * @default './gencast-utils.gen.ts'
+     * @default './gencast-utils.gen.[ext]'
      */
     utilityCastsPath?: string;
     /**
@@ -159,7 +174,7 @@ export declare function loadConfig(): GenCastConfig;
 export declare function initConfig(): boolean;
 /**
  * Updates VS Code workspace settings to exclude generated files.
- * Reads the genFileExt from the config and adds exclusion patterns.
+ * Reads the genFileName from the config and adds exclusion patterns.
  * @returns true if the settings were updated successfully
  */
 export declare function updateVSCodeSettings(): boolean;

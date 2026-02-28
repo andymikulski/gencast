@@ -1,7 +1,8 @@
 /** @type {import('gencast').GenCastConfig} */
 module.exports = {
   tsconfigPath: './tsconfig.json',
-  genFileExt: '.gen.ts',
+  genFileName: '[filename].gen.[ext]',
+  outputLanguage: 'ts',
   funcPrefix: 'CastTo',
   preferReuseCastFunctions: true,
   outputEmptyInterfaces: true,
@@ -15,5 +16,6 @@ module.exports = {
   strictNullCheck: true,
   includeTupleArrayMethods: false,
   generateUtilityCasts: false,
-  utilityCastsPath: './gencast-utils.gen.ts',
+  utilityCastsPath: './gencast-utils.gen.[ext]',
+  enableWeakMapCaching: false,
 };

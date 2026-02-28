@@ -29,12 +29,27 @@ export interface GenCastConfig {
   tsconfigPath?: string;
 
   /**
-   * The extension for generated files.
-   * For instance, if the extension is `.gen.ts`, then the generated file for
-   * `MyInterface.ts` will be `MyInterface.gen.ts`.
-   * @default '.gen.ts'
+   * A filename template for generated files, using `[filename]` and `[ext]` placeholders.
+   *
+   * - `[filename]` is replaced with the source file's base name (without extension).
+   * - `[ext]` is replaced with `ts` or `js` based on `outputLanguage`.
+   *
+   * For example, `'[filename].gen.[ext]'` produces `MyInterface.gen.ts` (or `.gen.js`).
+   *
+   * @default '[filename].gen.[ext]'
    */
-  genFileExt?: string;
+  genFileName?: string;
+
+  /**
+   * Controls whether the generated output is TypeScript (`.ts`) or plain JavaScript (`.js`).
+   *
+   * - `'ts'` — generates typed TypeScript with full type annotations, generics, and `import type` statements.
+   * - `'js'` — generates plain JavaScript with no type annotations. Type imports are omitted; only
+   *   value imports required for `instanceof` checks (class casts) are kept.
+   *
+   * @default 'ts'
+   */
+  outputLanguage?: 'ts' | 'js';
 
   /**
    * The prefix for all generated functions.
@@ -157,9 +172,10 @@ export interface GenCastConfig {
 
   /**
    * The path (relative to cwd) where the utility casts file is written when
-   * `generateUtilityCasts` is `true`.
+   * `generateUtilityCasts` is `true`. Supports the `[ext]` placeholder, which
+   * is replaced with `ts` or `js` based on `outputLanguage`.
    *
-   * @default './gencast-utils.gen.ts'
+   * @default './gencast-utils.gen.[ext]'
    */
   utilityCastsPath?: string;
 
@@ -196,7 +212,8 @@ const Utils = {
 // Default configuration
 const DEFAULT_CONFIG: Required<GenCastConfig> = {
   tsconfigPath: './tsconfig.json',
-  genFileExt: '.gen.ts',
+  genFileName: '[filename].gen.[ext]',
+  outputLanguage: 'ts',
   funcPrefix: 'CastTo',
   preferReuseCastFunctions: false,
   requireIPrefix: false,
@@ -210,7 +227,7 @@ const DEFAULT_CONFIG: Required<GenCastConfig> = {
   strictNullCheck: false,
   includeTupleArrayMethods: false,
   generateUtilityCasts: false,
-  utilityCastsPath: './gencast-utils.gen.ts',
+  utilityCastsPath: './gencast-utils.gen.[ext]',
   enableWeakMapCaching: false,
 };
 
@@ -254,8 +271,16 @@ module.exports = {
   // Path to your tsconfig.json (default: './tsconfig.json')
   tsconfigPath: './tsconfig.json',
 
-  // Extension for generated files (default: '.gen.ts')
-  genFileExt: '.gen.ts',
+  // Generated file name template using [filename] and [ext] placeholders (default: '[filename].gen.[ext]')
+  // [filename] is replaced with the source file's base name (no extension)
+  // [ext] is replaced with 'ts' or 'js' based on outputLanguage
+  // Example: '[filename].gen.[ext]' -> 'MyInterface.gen.ts'
+  genFileName: '[filename].gen.[ext]',
+
+  // Output language for generated files: 'ts' (default) or 'js'
+  // 'ts' produces fully-typed TypeScript with import type statements and generics
+  // 'js' produces plain JavaScript with no type annotations
+  outputLanguage: 'ts',
 
   // Prefix for generated functions (default: 'CastTo')
   funcPrefix: 'CastTo',
@@ -306,8 +331,8 @@ module.exports = {
   // Includes CastToClass<T>(obj, ctor) for generic instanceof checks
   generateUtilityCasts: false,
 
-  // Output path for the utility casts file (default: './gencast-utils.gen.ts')
-  utilityCastsPath: './gencast-utils.gen.ts',
+  // Output path for the utility casts file; supports [ext] placeholder (default: './gencast-utils.gen.[ext]')
+  utilityCastsPath: './gencast-utils.gen.[ext]',
 
   // Cache cast results in a per-function WeakMap keyed on the input object (default: false)
   // Speeds up repeated casts of the same object; only applies to interface/object-type casts
@@ -328,22 +353,25 @@ module.exports = {
 
 /**
  * Updates VS Code workspace settings to exclude generated files.
- * Reads the genFileExt from the config and adds exclusion patterns.
+ * Reads the genFileName from the config and adds exclusion patterns.
  * @returns true if the settings were updated successfully
  */
 export function updateVSCodeSettings(): boolean {
   const vscodeDirPath = path.resolve(process.cwd(), '.vscode');
   const settingsPath = path.resolve(vscodeDirPath, 'settings.json');
 
-  // Load config to get genFileExt
   const userConfig = loadConfig();
   const config: Required<GenCastConfig> = {
     ...DEFAULT_CONFIG,
     ...userConfig,
   };
 
-  const genFileExt = config.genFileExt;
-  const pattern = `**/*${genFileExt}`;
+  // Derive the glob suffix from the genFileName template (the part after [filename])
+  const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+  const filenameIdx = config.genFileName.indexOf('[filename]');
+  const rawSuffix = config.genFileName.slice(filenameIdx + '[filename]'.length);
+  const resolvedSuffix = rawSuffix.replace('[ext]', ext);
+  const pattern = `**/*${resolvedSuffix}`;
 
   // Create .vscode directory if it doesn't exist
   if (!fs.existsSync(vscodeDirPath)) {
@@ -443,15 +471,30 @@ export function generateCodegen(userConfig: GenCastConfig = {}): void {
  * Contains generic helpers that are not tied to any specific generated type.
  */
 function generateUtilityCastsFile(config: Required<GenCastConfig>): void {
-  const outputPath = path.resolve(process.cwd(), config.utilityCastsPath);
+  const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+  const outputPath = path.resolve(process.cwd(), config.utilityCastsPath.replace('[ext]', ext));
   const failureValue = config.failureReturnValue;
+  const isJS = config.outputLanguage === 'js';
 
   const nullCheck = config.strictNullCheck
     ? 'obj !== null && obj !== undefined'
     : 'obj != null';
 
-  const content =
-`// This is an autogenerated file, DO NOT EDIT.
+  const content = isJS
+    ? `// This is an autogenerated file, DO NOT EDIT.
+// This file was generated by GenCast and contains generic cast utilities.
+
+/**
+ * Casts \`obj\` to \`T\` if it is an instance of \`ctor\`, otherwise returns ${failureValue}.
+ *
+ * This is the generic alternative to per-class generated cast functions.
+ * Usage: \`CastToClass(someObj, MyClass)\`
+ */
+export function CastToClass(obj, ctor) {
+  return (${nullCheck} && obj instanceof ctor) ? obj : ${failureValue};
+}
+`
+    : `// This is an autogenerated file, DO NOT EDIT.
 // This file was generated by GenCast and contains generic cast utilities.
 
 /**
@@ -573,16 +616,58 @@ function findCyclicGenImports(
 }
 
 // ---------------------------------------------------------------------------
+// genFileName helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves the generated file name for a source file using the `genFileName` template.
+ * `[filename]` is replaced with the source base name (no extension), `[ext]` with `ts` or `js`.
+ */
+function resolveGenFileName(sourceBaseName: string, config: Required<GenCastConfig>): string {
+  const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+  const baseName = path.basename(sourceBaseName, path.extname(sourceBaseName));
+  return config.genFileName
+    .replace('[filename]', baseName)
+    .replace('[ext]', ext);
+}
+
+/**
+ * Returns `true` if the given file base name appears to be a previously-generated file,
+ * based on the suffix that follows the `[filename]` placeholder in the template.
+ */
+function isGeneratedFile(baseName: string, config: Required<GenCastConfig>): boolean {
+  const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+  const filenameIdx = config.genFileName.indexOf('[filename]');
+  const rawSuffix = config.genFileName.slice(filenameIdx + '[filename]'.length);
+  const suffix = rawSuffix.replace('[ext]', ext);
+  return baseName.endsWith(suffix);
+}
+
+/**
+ * Returns the module-specifier suffix appended to a base import path when referencing
+ * another generated file (e.g. `'./Gun'` → `'./Gun.gen'`).
+ *
+ * This is the portion after `[filename]` in the template, with the trailing file extension
+ * (`.ts` / `.js`) stripped, because TypeScript module specifiers omit the extension.
+ */
+function genModuleSpecifierSuffix(config: Required<GenCastConfig>): string {
+  const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+  const filenameIdx = config.genFileName.indexOf('[filename]');
+  const rawSuffix = config.genFileName.slice(filenameIdx + '[filename]'.length);
+  return rawSuffix.replace('[ext]', ext).replace(/\.(ts|js)$/, '');
+}
+
+// ---------------------------------------------------------------------------
 
 function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastConfig>, genImportGraph: Map<string, Set<string>>) {
   // If this function is called on a previously-generated file, ignore it
-  if (sourceFile.getBaseName().endsWith(config.genFileExt)) {
+  if (isGeneratedFile(sourceFile.getBaseName(), config)) {
     return;
   }
 
   const outputFilePath = path.resolve(
     sourceFile.getDirectoryPath(),
-    `./${sourceFile.getBaseNameWithoutExtension()}${config.genFileExt}`
+    `./${resolveGenFileName(sourceFile.getBaseName(), config)}`
   );
 
   // If this file exists already, just straight up remove it.
@@ -655,7 +740,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
       stringLiteralTypeAliases.length == 0) {
     return;
   }
-  console.log('📃 ' + sourceFile.getBaseName());
+  console.log('👉 ' + sourceFile.getBaseName());
 
   // Compute which source files would create circular dependencies if we imported their
   // generated cast functions from this file's gen file.
@@ -675,6 +760,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   let genFunctionImports = new Map<SourceFile, Set<string>>();
   let generatedCode = '';
   let hasOutput = false;
+  const isJS = config.outputLanguage === 'js';
 
   // for each interface found in this source file...
   interfaces.forEach((int) => {
@@ -738,7 +824,23 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
       const bodyChecksStr = bodyChecks.length > 0 ? bodyChecks.join(' && ') : 'true';
       const cacheVar = `_wmc_${funcName}`;
 
-      generatedCode += `
+      if (isJS) {
+        generatedCode += `
+  let ${cacheVar};
+  export function ${funcName}(obj) {
+    if (obj != null && typeof obj === 'object') {
+      if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
+      const _cached = ${cacheVar}.get(obj);
+      if (_cached !== undefined) { return _cached ? obj : ${failureValue}; }
+      const _result = (${bodyChecksStr});
+      ${cacheVar}.set(obj, _result);
+      return _result ? obj : ${failureValue};
+    }
+    return ${failureValue};
+  }
+  `;
+      } else {
+        generatedCode += `
   let ${cacheVar}: WeakMap<object, boolean> | undefined;
   export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
     if (obj != null && typeof obj === 'object') {
@@ -752,13 +854,22 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     return ${failureValue};
   }
   `;
+      }
     } else {
       const checks = compiledPropChecks.join(' && ');
-      generatedCode += `
+      if (isJS) {
+        generatedCode += `
+  export function ${funcName}(obj) {
+    return (${checks}) ? obj : ${failureValue};
+  }
+  `;
+      } else {
+        generatedCode += `
   export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
+      }
     }
   });
 
@@ -798,11 +909,19 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     const funcName = `${config.funcPrefix}${className}`;
     const failureValue = config.failureReturnValue;
 
-    generatedCode += `
+    if (isJS) {
+      generatedCode += `
+  export function ${funcName}(obj) {
+    return (obj instanceof ${className}) ? obj : ${failureValue};
+  }
+  `;
+    } else {
+      generatedCode += `
   export function ${funcName}${fullGenString}(obj: any): ${className}${shortGenString} | ${failureValue} {
     return (obj instanceof ${className}) ? obj : ${failureValue};
   }
   `;
+    }
 
     console.log(`\t${className} (class)`);
   });
@@ -864,7 +983,23 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
       const bodyChecksStr = bodyChecks.length > 0 ? bodyChecks.join(' && ') : 'true';
       const cacheVar = `_wmc_${funcName}`;
 
-      generatedCode += `
+      if (isJS) {
+        generatedCode += `
+  let ${cacheVar};
+  export function ${funcName}(obj) {
+    if (obj != null && typeof obj === 'object') {
+      if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
+      const _cached = ${cacheVar}.get(obj);
+      if (_cached !== undefined) { return _cached ? obj : ${failureValue}; }
+      const _result = (${bodyChecksStr});
+      ${cacheVar}.set(obj, _result);
+      return _result ? obj : ${failureValue};
+    }
+    return ${failureValue};
+  }
+  `;
+      } else {
+        generatedCode += `
   let ${cacheVar}: WeakMap<object, boolean> | undefined;
   export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
     if (obj != null && typeof obj === 'object') {
@@ -878,13 +1013,22 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     return ${failureValue};
   }
   `;
+      }
     } else {
       const checks = compiledPropChecks.join(' && ');
-      generatedCode += `
+      if (isJS) {
+        generatedCode += `
+  export function ${funcName}(obj) {
+    return (${checks}) ? obj : ${failureValue};
+  }
+  `;
+      } else {
+        generatedCode += `
   export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
+      }
     }
   });
 
@@ -921,11 +1065,19 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     const funcName = `${config.funcPrefix}${typeName}`;
     const failureValue = config.failureReturnValue;
 
-    generatedCode += `
+    if (isJS) {
+      generatedCode += `
+  export function ${funcName}(obj) {
+    return (${typeCheck}) ? obj : ${failureValue};
+  }
+  `;
+    } else {
+      generatedCode += `
   export function ${funcName}(obj: any): ${typeName} | ${failureValue} {
     return (${typeCheck}) ? obj : ${failureValue};
   }
   `;
+    }
 
     console.log(`\t${typeName} (primitive type)`);
   });
@@ -964,11 +1116,19 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     const checkString = checks.join(' || ');
     const failureValue = config.failureReturnValue;
 
-    generatedCode += `
+    if (isJS) {
+      generatedCode += `
+  export function ${funcName}(obj) {
+    return (${checkString}) ? obj : ${failureValue};
+  }
+  `;
+    } else {
+      generatedCode += `
   export function ${funcName}(obj: any): ${typeName} | ${failureValue} {
     return (${checkString}) ? obj : ${failureValue};
   }
   `;
+    }
 
     console.log(`\t${typeName} (string literal type)`);
   });
@@ -986,45 +1146,45 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
     const [file, funcNames] = genFuncValue;
     if (funcNames.size === 0) continue;
 
-    // Generate the path to the .gen.ts file
+    // Generate the path to the generated file for this source file
     // Get the path FROM current source file TO the base file
     const relativePathBase = sourceFile.getRelativePathAsModuleSpecifierTo(file);
-    // Append the gen file extension marker (without .ts) to the module specifier
-    // E.g., './Gun' + '.gen' = './Gun.gen'
-    const genExtWithoutTs = config.genFileExt.replace(/\.ts$/, '');
-    const relativePathGen = relativePathBase + genExtWithoutTs;
+    // Append the gen module-specifier suffix (e.g. '.gen') derived from the genFileName template
+    const relativePathGen = relativePathBase + genModuleSpecifierSuffix(config);
 
     const funcArray = Array.from(funcNames);
     importString += `import { ${funcArray.join(', ')} } from '${relativePathGen}';
 `;
   }
 
-  // Generate type imports (for interfaces)
-  const typeImportItems = typeImports.entries();
-  let typeValue: [SourceFile, Map<string, boolean>];
-  while ((typeValue = typeImportItems.next()?.value!)) {
-    const [file, members] = typeValue;
-    const relativePath = sourceFile.getRelativePathAsModuleSpecifierTo(file);
+  // Generate type imports (for interfaces) — skipped for JS output since there are no type annotations
+  if (!isJS) {
+    const typeImportItems = typeImports.entries();
+    let typeValue: [SourceFile, Map<string, boolean>];
+    while ((typeValue = typeImportItems.next()?.value!)) {
+      const [file, members] = typeValue;
+      const relativePath = sourceFile.getRelativePathAsModuleSpecifierTo(file);
 
-    const defaultImports: string[] = [];
-    const namedImports: string[] = [];
+      const defaultImports: string[] = [];
+      const namedImports: string[] = [];
 
-    members.forEach((isDefault, name) => {
-      if (isDefault) {
-        defaultImports.push(name);
-      } else {
-        namedImports.push(name);
+      members.forEach((isDefault, name) => {
+        if (isDefault) {
+          defaultImports.push(name);
+        } else {
+          namedImports.push(name);
+        }
+      });
+
+      // Generate default imports
+      defaultImports.forEach(name => {
+        importString += `import type ${name} from '${relativePath}';\n`;
+      });
+
+      // Generate named imports
+      if (namedImports.length > 0) {
+        importString += `import type { ${namedImports.join(', ')} } from '${relativePath}';\n`;
       }
-    });
-
-    // Generate default imports
-    defaultImports.forEach(name => {
-      importString += `import type ${name} from '${relativePath}';\n`;
-    });
-
-    // Generate named imports
-    if (namedImports.length > 0) {
-      importString += `import type { ${namedImports.join(', ')} } from '${relativePath}';\n`;
     }
   }
 

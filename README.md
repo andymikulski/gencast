@@ -19,8 +19,7 @@ export interface IUser {
 // Generated function (in IUser.gen.ts)
 export function CastToUser(obj: any): IUser | null {
   return (
-    obj !== null &&
-    obj !== undefined &&
+    obj != null &&
     typeof(obj.id) === "number" &&
     typeof(obj.name) === "string" &&
     typeof(obj.email) === "string"
@@ -124,13 +123,17 @@ module.exports = {
   // Path to your tsconfig.json (default: './tsconfig.json')
   tsconfigPath: './tsconfig.json',
 
-  // Extension for generated files (default: '.gen.ts')
-  genFileExt: '.gen.ts',
+  // Filename template for generated files (default: '[filename].gen.[ext]')
+  // [filename] = source base name, [ext] = ts or js (based on outputLanguage)
+  genFileName: '[filename].gen.[ext]',
+
+  // Output language: 'ts' (default) or 'js'
+  outputLanguage: 'ts',
 
   // Prefix for generated functions (default: 'CastTo')
   funcPrefix: 'CastTo',
 
-  // Reuse cast functions for inherited interfaces (default: false)
+  // Reuse cast functions for inherited interfaces instead of inlining checks (default: false)
   // Warning: may create circular dependencies
   preferReuseCastFunctions: false,
 
@@ -143,42 +146,40 @@ module.exports = {
   // Remove 'I' prefix from interface names in function names (default: true)
   // For example, IUser generates CastToUser when true, CastToIUser when false
   removeIPrefix: true,
+
+  // Generate cast functions for classes using instanceof checks (default: false)
+  generateClassCasts: false,
+
+  // Generate cast functions for object type aliases, e.g. `type Point = { x: number; y: number }` (default: false)
+  generateTypeCasts: false,
+
+  // Generate cast functions for primitive type aliases, e.g. `type ID = number` (default: false)
+  generatePrimitiveTypeCasts: false,
+
+  // Generate cast functions for string literal union types, e.g. `type Status = 'active' | 'inactive'` (default: false)
+  generateStringLiteralTypeCasts: false,
+
+  // Value returned when a cast fails: 'null' (default) or 'undefined'
+  failureReturnValue: 'null',
+
+  // Use strict null checks: obj !== null && obj !== undefined (default: false)
+  // When false, uses the more concise loose check: obj != null
+  strictNullCheck: false,
+
+  // Include inherited Array prototype method checks in tuple cast functions (default: false)
+  includeTupleArrayMethods: false,
+
+  // Generate a utility file with generic cast helpers such as CastToClass<T>(obj, ctor) (default: false)
+  generateUtilityCasts: false,
+
+  // Output path for the utility casts file; [ext] is replaced with 'ts' or 'js' (default: './gencast-utils.gen.[ext]')
+  utilityCastsPath: './gencast-utils.gen.[ext]',
+
+  // Cache cast results per-object using a WeakMap for faster repeated calls (default: false)
+  enableWeakMapCaching: false,
 };
 ```
 
-You can also use the API programmatically:
-
-```typescript
-import { generateCodegen } from 'gencast';
-
-generateCodegen({
-  tsconfigPath: './tsconfig.json',
-  funcPrefix: 'Validate',
-});
-```
-
-## Features
-
-### Handles Complex Types
-
-- **Inheritance**: Validates all properties from parent interfaces
-- **Generics**: Generates generic casting functions
-- **Nullable types**: Properly handles `| null` unions
-- **String unions**: Validates string literal types like `"admin" | "user"`
-- **Methods**: Checks that methods exist (but can't validate signatures)
-
-### Smart Generation
-
-- Only generates for **exported** interfaces
-- Skips previously generated `.gen.ts` files
-- Removes outdated generated files automatically
-- Handles relative imports correctly
-
-### TypeScript Native
-
-- Uses `ts-morph` for accurate TypeScript parsing
-- Respects your `tsconfig.json` settings
-- Generates properly typed `.d.ts` files
 
 ## Example
 
@@ -204,8 +205,7 @@ import type { IUser, IAdmin } from './User';
 
 export function CastToUser(obj: any): IUser | null {
   return (
-    obj !== null &&
-    obj !== undefined &&
+    obj != null &&
     typeof(obj.id) === "number" &&
     typeof(obj.name) === "string" &&
     typeof(obj.email) === "string"
@@ -214,8 +214,7 @@ export function CastToUser(obj: any): IUser | null {
 
 export function CastToAdmin(obj: any): IAdmin | null {
   return (
-    obj !== null &&
-    obj !== undefined &&
+    obj != null &&
     typeof(obj.id) === "number" &&
     typeof(obj.name) === "string" &&
     typeof(obj.email) === "string" &&
@@ -236,8 +235,9 @@ export function CastToAdmin(obj: any): IAdmin | null {
 
 - Cannot validate method return types (only checks methods exist)
 - Generic type parameters are checked for existence, not specific types
-- Optional properties (`?`) are not validated
+- Optional properties (`?`) are not validated (their presence is not required)
 - Array/object contents are not deeply validated (only checks `typeof === "object"`)
+- Union types with multiple object shapes (e.g. `{ success: true } | { success: false }`) are validated against the common properties only
 
 ## License
 
