@@ -14,4 +14,6 @@ module.exports = {
   failureReturnValue: 'null',
   strictNullCheck: true,
   checkTupleArrayMethods: false,
+  generateUtilityCasts: false,
+  utilityCastsPath: './gencast-utils.gen.ts',
 };

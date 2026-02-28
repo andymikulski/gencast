@@ -59,6 +59,7 @@ export interface GenCastConfig {
     /**
      * If `true`, will generate cast functions for classes using instanceof checks.
      * This provides a simpler runtime check compared to property-based validation used for interfaces.
+     * If you want a general catch-all instead of per-class functions, consider enabling `generateUtilityCasts`.
      *
      * @default false
      */
@@ -113,6 +114,25 @@ export interface GenCastConfig {
      * @default false
      */
     checkTupleArrayMethods?: boolean;
+    /**
+     * If `true`, generates a single utility file containing generic cast helpers that are not
+     * tied to any specific type. Currently includes:
+     *
+     * - `CastToClass<T>(obj, ctor)` — generic instanceof check, so you can write
+     *   `CastToClass(obj, MyClass)` instead of a per-class generated function.
+     *
+     * The output path is controlled by `utilityCastsPath`.
+     *
+     * @default false
+     */
+    generateUtilityCasts?: boolean;
+    /**
+     * The path (relative to cwd) where the utility casts file is written when
+     * `generateUtilityCasts` is `true`.
+     *
+     * @default './gencast-utils.gen.ts'
+     */
+    utilityCastsPath?: string;
 }
 /**
  * Attempts to load gencast.config.js from the current working directory.
