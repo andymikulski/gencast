@@ -1134,7 +1134,6 @@ function processInterface(
   // IF TRYING TO REUSE EXISTING CAST FUNCTIONS...
   if (config.preferReuseCastFunctions) {
     interfaceDeclaration.getBaseDeclarations().forEach((i) => {
-      // Only process if it's actually an InterfaceDeclaration
       if (i.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
         const baseInterface = i as InterfaceDeclaration;
         const baseFile = baseInterface.getSourceFile();
@@ -1170,6 +1169,11 @@ function processInterface(
 
           propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
         }
+      } else if (i.isKind(ts.SyntaxKind.TypeLiteral)) {
+        // Non-interface base (e.g. an inline object type or a type alias resolved to a type
+        // literal) — there is no separately generated cast function to call, so always inline.
+        const subProps = processTypeLiteral(<TypeLiteralNode>i);
+        propertiesCheckCode.push(...subProps);
       }
     });
   } else {

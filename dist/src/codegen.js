@@ -829,7 +829,6 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
     if (config.preferReuseCastFunctions) {
         interfaceDeclaration.getBaseDeclarations().forEach((i) => {
             var _a;
-            // Only process if it's actually an InterfaceDeclaration
             if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
                 const baseInterface = i;
                 const baseFile = baseInterface.getSourceFile();
@@ -855,6 +854,12 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                     // If in the same file, no import needed - the function will be in the same generated file
                     propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
                 }
+            }
+            else if (i.isKind(ts_morph_1.ts.SyntaxKind.TypeLiteral)) {
+                // Non-interface base (e.g. an inline object type or a type alias resolved to a type
+                // literal) — there is no separately generated cast function to call, so always inline.
+                const subProps = processTypeLiteral(i);
+                propertiesCheckCode.push(...subProps);
             }
         });
     }
