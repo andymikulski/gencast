@@ -688,6 +688,12 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
       shortGenerics.push(shortName);
       fullGenerics.push(longName);
+
+      // Ensure any cross-file types used in the constraint are imported
+      const constraintNode = v.getConstraint();
+      if (constraintNode) {
+        addConstraintTypeToImports(constraintNode.getType(), sourceFile, typeImports);
+      }
     });
 
     const shortGenString =
@@ -789,6 +795,12 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
       shortGenerics.push(shortName);
       fullGenerics.push(longName);
+
+      // Ensure any cross-file types used in the constraint are imported
+      const constraintNode = v.getConstraint();
+      if (constraintNode) {
+        addConstraintTypeToImports(constraintNode.getType(), sourceFile, typeImports);
+      }
     });
 
     const shortGenString =
@@ -928,7 +940,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   let typeValue: [SourceFile, Map<string, boolean>];
   while ((typeValue = typeImportItems.next()?.value!)) {
     const [file, members] = typeValue;
-    const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
+    const relativePath = sourceFile.getRelativePathAsModuleSpecifierTo(file);
 
     const defaultImports: string[] = [];
     const namedImports: string[] = [];
@@ -957,7 +969,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   let valueValue: [SourceFile, Map<string, boolean>];
   while ((valueValue = valueImportItems.next()?.value!)) {
     const [file, members] = valueValue;
-    const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
+    const relativePath = sourceFile.getRelativePathAsModuleSpecifierTo(file);
 
     const defaultImports: string[] = [];
     const namedImports: string[] = [];
@@ -989,6 +1001,43 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
 
 function removeIPrefixMaybe(val: string, shouldRemove: boolean) {
   return shouldRemove && val.charAt(0) === 'I' ? val.slice(1) : val;
+}
+
+/**
+ * For a type-parameter constraint (e.g. `T extends Rect`, `T extends Rect & Shape`),
+ * finds all named types referenced in the constraint and adds them to `typeImports`
+ * so the generated file has the necessary `import type` statements.
+ */
+function addConstraintTypeToImports(
+  constraintType: Type<ts.Type>,
+  currentSourceFile: SourceFile,
+  typeImports: Map<SourceFile, Map<string, boolean>>
+): void {
+  // Flatten intersection / union down to individual constituent types
+  const constituents = constraintType.isIntersection()
+    ? constraintType.getIntersectionTypes()
+    : constraintType.isUnion()
+      ? constraintType.getUnionTypes()
+      : [constraintType];
+
+  for (const t of constituents) {
+    if (t.isBoolean() || t.isNumber() || t.isString()) continue;
+    const symbol = t.getAliasSymbol() ?? t.getSymbol();
+    const decl = (symbol?.getDeclarations() ?? []).find(
+      (d) =>
+        d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+        d.isKind(ts.SyntaxKind.TypeAliasDeclaration) ||
+        d.isKind(ts.SyntaxKind.ClassDeclaration)
+    );
+    if (!decl || !symbol) continue;
+    const declFile = decl.getSourceFile();
+    if (declFile.getFilePath() === currentSourceFile.getFilePath()) continue;
+    const name = symbol.getName();
+    const isDefault = (decl as any).isDefaultExport?.() ?? false;
+    const list = typeImports.get(declFile) ?? new Map<string, boolean>();
+    list.set(name, isDefault);
+    typeImports.set(declFile, list);
+  }
 }
 
 function processInterface(

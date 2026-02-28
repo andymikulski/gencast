@@ -468,6 +468,11 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             const shortName = v.getName();
             shortGenerics.push(shortName);
             fullGenerics.push(longName);
+            // Ensure any cross-file types used in the constraint are imported
+            const constraintNode = v.getConstraint();
+            if (constraintNode) {
+                addConstraintTypeToImports(constraintNode.getType(), sourceFile, typeImports);
+            }
         });
         const shortGenString = shortGenerics.length > 0 ? `<${shortGenerics.join(', ')}>` : '';
         const fullGenString = fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
@@ -546,6 +551,11 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             const shortName = v.getName();
             shortGenerics.push(shortName);
             fullGenerics.push(longName);
+            // Ensure any cross-file types used in the constraint are imported
+            const constraintNode = v.getConstraint();
+            if (constraintNode) {
+                addConstraintTypeToImports(constraintNode.getType(), sourceFile, typeImports);
+            }
         });
         const shortGenString = shortGenerics.length > 0 ? `<${shortGenerics.join(', ')}>` : '';
         const fullGenString = fullGenerics.length > 0 ? `<${fullGenerics.join(', ')}>` : '';
@@ -665,7 +675,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
     let typeValue;
     while ((typeValue = (_b = typeImportItems.next()) === null || _b === void 0 ? void 0 : _b.value)) {
         const [file, members] = typeValue;
-        const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
+        const relativePath = sourceFile.getRelativePathAsModuleSpecifierTo(file);
         const defaultImports = [];
         const namedImports = [];
         members.forEach((isDefault, name) => {
@@ -690,7 +700,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
     let valueValue;
     while ((valueValue = (_c = valueImportItems.next()) === null || _c === void 0 ? void 0 : _c.value)) {
         const [file, members] = valueValue;
-        const relativePath = file.getRelativePathAsModuleSpecifierTo(sourceFile);
+        const relativePath = sourceFile.getRelativePathAsModuleSpecifierTo(file);
         const defaultImports = [];
         const namedImports = [];
         members.forEach((isDefault, name) => {
@@ -716,6 +726,38 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
 }
 function removeIPrefixMaybe(val, shouldRemove) {
     return shouldRemove && val.charAt(0) === 'I' ? val.slice(1) : val;
+}
+/**
+ * For a type-parameter constraint (e.g. `T extends Rect`, `T extends Rect & Shape`),
+ * finds all named types referenced in the constraint and adds them to `typeImports`
+ * so the generated file has the necessary `import type` statements.
+ */
+function addConstraintTypeToImports(constraintType, currentSourceFile, typeImports) {
+    var _a, _b, _c, _d, _e, _f;
+    // Flatten intersection / union down to individual constituent types
+    const constituents = constraintType.isIntersection()
+        ? constraintType.getIntersectionTypes()
+        : constraintType.isUnion()
+            ? constraintType.getUnionTypes()
+            : [constraintType];
+    for (const t of constituents) {
+        if (t.isBoolean() || t.isNumber() || t.isString())
+            continue;
+        const symbol = (_a = t.getAliasSymbol()) !== null && _a !== void 0 ? _a : t.getSymbol();
+        const decl = ((_b = symbol === null || symbol === void 0 ? void 0 : symbol.getDeclarations()) !== null && _b !== void 0 ? _b : []).find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
+            d.isKind(ts_morph_1.ts.SyntaxKind.TypeAliasDeclaration) ||
+            d.isKind(ts_morph_1.ts.SyntaxKind.ClassDeclaration));
+        if (!decl || !symbol)
+            continue;
+        const declFile = decl.getSourceFile();
+        if (declFile.getFilePath() === currentSourceFile.getFilePath())
+            continue;
+        const name = symbol.getName();
+        const isDefault = (_e = (_d = (_c = decl).isDefaultExport) === null || _d === void 0 ? void 0 : _d.call(_c)) !== null && _e !== void 0 ? _e : false;
+        const list = (_f = typeImports.get(declFile)) !== null && _f !== void 0 ? _f : new Map();
+        list.set(name, isDefault);
+        typeImports.set(declFile, list);
+    }
 }
 function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config, isInherited = false, cyclicFilePaths = new Set()) {
     var _a;
@@ -746,6 +788,8 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                 if (wouldCycle) {
                     // Importing this base's cast function would create a circular dependency between
                     // generated files — fall back to inlining all its property checks instead.
+                    const baseName = baseInterface.getName();
+                    console.log(`\t\t↳ ${interfaceName} extends ${baseName}: inlining (cycle detected)`);
                     const subProps = processInterface(baseInterface, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths);
                     propertiesCheckCode.push(...subProps);
                 }
@@ -895,6 +939,7 @@ function generateComplexTypeCheck(propRef, propType, location, genFunctionImport
                 return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
             }
             // wouldCycle === true: fall through to the inline check below
+            console.log(`\t\t↳ ${propRef} (${symbol.getName()}): inlining (cycle detected)`);
         }
     }
     // Inline: null-guard the element and then check each of its properties
