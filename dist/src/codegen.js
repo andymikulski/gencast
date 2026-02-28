@@ -46,6 +46,7 @@ const DEFAULT_CONFIG = {
     checkTupleArrayMethods: false,
     generateUtilityCasts: false,
     utilityCastsPath: './gencast-utils.gen.ts',
+    enableWeakMapCaching: false,
 };
 /**
  * Attempts to load gencast.config.js from the current working directory.
@@ -137,6 +138,10 @@ module.exports = {
 
   // Output path for the utility casts file (default: './gencast-utils.gen.ts')
   utilityCastsPath: './gencast-utils.gen.ts',
+
+  // Cache cast results in a per-function WeakMap keyed on the input object (default: false)
+  // Speeds up repeated casts of the same object; only applies to interface/object-type casts
+  enableWeakMapCaching: false,
 };
 `;
     try {
@@ -483,13 +488,37 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             : 'obj != null';
         compiledPropChecks.unshift(nullCheck);
         const funcName = `${config.funcPrefix}${removeIPrefixMaybe(interfaceName, config.removeIPrefix)}`;
-        const checks = compiledPropChecks.join(' && ');
         const failureValue = config.failureReturnValue;
-        generatedCode += `
+        if (config.enableWeakMapCaching) {
+            // compiledPropChecks[0] is the null-check; the rest are property checks.
+            // The WeakMap path already guards against null/non-object, so only the
+            // property checks are placed inside the cached branch.
+            const bodyChecks = compiledPropChecks.slice(1);
+            const bodyChecksStr = bodyChecks.length > 0 ? bodyChecks.join(' && ') : 'true';
+            const cacheVar = `_wmc_${funcName}`;
+            generatedCode += `
+  let ${cacheVar}: WeakMap<object, boolean> | undefined;
+  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
+    if (obj != null && typeof obj === 'object') {
+      if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
+      const _cached = ${cacheVar}.get(obj);
+      if (_cached !== undefined) { return _cached ? obj : ${failureValue}; }
+      const _result = (${bodyChecksStr});
+      ${cacheVar}.set(obj, _result);
+      return _result ? obj : ${failureValue};
+    }
+    return ${failureValue};
+  }
+  `;
+        }
+        else {
+            const checks = compiledPropChecks.join(' && ');
+            generatedCode += `
   export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
+        }
     });
     // for each class found in this source file...
     classes.forEach((cls) => {
@@ -564,13 +593,34 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             : 'obj != null';
         compiledPropChecks.unshift(nullCheck);
         const funcName = `${config.funcPrefix}${typeName}`;
-        const checks = compiledPropChecks.join(' && ');
         const failureValue = config.failureReturnValue;
-        generatedCode += `
+        if (config.enableWeakMapCaching) {
+            const bodyChecks = compiledPropChecks.slice(1);
+            const bodyChecksStr = bodyChecks.length > 0 ? bodyChecks.join(' && ') : 'true';
+            const cacheVar = `_wmc_${funcName}`;
+            generatedCode += `
+  let ${cacheVar}: WeakMap<object, boolean> | undefined;
+  export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
+    if (obj != null && typeof obj === 'object') {
+      if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
+      const _cached = ${cacheVar}.get(obj);
+      if (_cached !== undefined) { return _cached ? obj : ${failureValue}; }
+      const _result = (${bodyChecksStr});
+      ${cacheVar}.set(obj, _result);
+      return _result ? obj : ${failureValue};
+    }
+    return ${failureValue};
+  }
+  `;
+        }
+        else {
+            const checks = compiledPropChecks.join(' && ');
+            generatedCode += `
   export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
+        }
     });
     // for each primitive type alias found in this source file...
     primitiveTypeAliases.forEach((typeAlias) => {

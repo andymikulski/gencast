@@ -133,6 +133,19 @@ export interface GenCastConfig {
      * @default './gencast-utils.gen.ts'
      */
     utilityCastsPath?: string;
+    /**
+     * If `true`, each generated cast function will use a module-level `WeakMap<object, boolean>`
+     * to cache the result of the structural check on a per-object basis. On subsequent calls with
+     * the same object the cached boolean is returned immediately, avoiding redundant property
+     * traversals. The WeakMap is lazily instantiated on first use so there is no overhead for
+     * code paths that never invoke the function.
+     *
+     * Only applies to interface and object-type-alias cast functions (those that check object
+     * properties). Primitive and string-literal cast functions are unaffected.
+     *
+     * @default false
+     */
+    enableWeakMapCaching?: boolean;
 }
 /**
  * Attempts to load gencast.config.js from the current working directory.
