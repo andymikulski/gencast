@@ -223,14 +223,6 @@ export function CastToAdmin(obj: any): IAdmin | null {
 }
 ```
 
-## Use Cases
-
-- **API Response Validation**: Validate data from external APIs
-- **Message Queue Handlers**: Ensure messages have the correct shape
-- **Storage Deserialization**: Validate data loaded from localStorage/database
-- **Third-party Library Integration**: Type-check data from untyped libraries
-- **Runtime Type Guards**: Generate type guards automatically
-
 ## Limitations
 
 - Cannot validate method return types (only checks methods exist)
