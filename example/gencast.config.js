@@ -13,7 +13,7 @@ module.exports = {
   removeIPrefix: true,
   failureReturnValue: 'null',
   strictNullCheck: true,
-  checkTupleArrayMethods: false,
+  includeTupleArrayMethods: false,
   generateUtilityCasts: false,
   utilityCastsPath: './gencast-utils.gen.ts',
 };

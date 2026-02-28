@@ -43,7 +43,7 @@ const DEFAULT_CONFIG = {
     removeIPrefix: true,
     failureReturnValue: 'null',
     strictNullCheck: false,
-    checkTupleArrayMethods: false,
+    includeTupleArrayMethods: false,
     generateUtilityCasts: false,
     utilityCastsPath: './gencast-utils.gen.ts',
     enableWeakMapCaching: false,
@@ -130,7 +130,7 @@ module.exports = {
 
   // Include Array prototype method checks (e.g. reverse, slice, shift) in tuple casts (default: false)
   // Tuples are rarely operated on as generic arrays, so these checks are omitted by default
-  checkTupleArrayMethods: false,
+  includeTupleArrayMethods: false,
 
   // Generate a shared utility file with generic cast helpers (default: false)
   // Includes CastToClass<T>(obj, ctor) for generic instanceof checks
@@ -1065,7 +1065,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
         // those out so the generated cast only checks the actual tuple elements.
         const isTuple = type.isTuple();
         const rawProperties = type.getProperties();
-        const properties = (isTuple && !config.checkTupleArrayMethods)
+        const properties = (isTuple && !config.includeTupleArrayMethods)
             ? rawProperties.filter((p) => /^\d+$/.test(p.getName()))
             : rawProperties;
         properties.forEach((prop) => {

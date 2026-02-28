@@ -113,7 +113,7 @@ export interface GenCastConfig {
      *
      * @default false
      */
-    checkTupleArrayMethods?: boolean;
+    includeTupleArrayMethods?: boolean;
     /**
      * If `true`, generates a single utility file containing generic cast helpers that are not
      * tied to any specific type. Currently includes:
