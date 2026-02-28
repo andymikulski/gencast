@@ -105,6 +105,14 @@ export interface GenCastConfig {
      * @default false
      */
     strictNullCheck?: boolean;
+    /**
+     * If `true`, tuple cast functions will include checks for inherited Array prototype methods
+     * (e.g. `reverse`, `slice`, `shift`). These checks are technically correct but add noise
+     * since tuples are rarely treated as general arrays.
+     *
+     * @default false
+     */
+    checkTupleArrayMethods?: boolean;
 }
 /**
  * Attempts to load gencast.config.js from the current working directory.

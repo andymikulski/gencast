@@ -131,6 +131,15 @@ export interface GenCastConfig {
    * @default false
    */
   strictNullCheck?: boolean;
+
+  /**
+   * If `true`, tuple cast functions will include checks for inherited Array prototype methods
+   * (e.g. `reverse`, `slice`, `shift`). These checks are technically correct but add noise
+   * since tuples are rarely treated as general arrays.
+   *
+   * @default false
+   */
+  checkTupleArrayMethods?: boolean;
 }
 
 // Simple object containing a bunch of util functions.
@@ -163,6 +172,7 @@ const DEFAULT_CONFIG: Required<GenCastConfig> = {
   removeIPrefix: true,
   failureReturnValue: 'null',
   strictNullCheck: false,
+  checkTupleArrayMethods: false,
 };
 
 /**
@@ -248,6 +258,10 @@ module.exports = {
   // true: obj !== null && obj !== undefined
   // false: obj != null
   strictNullCheck: true,
+
+  // Include Array prototype method checks (e.g. reverse, slice, shift) in tuple casts (default: false)
+  // Tuples are rarely operated on as generic arrays, so these checks are omitted by default
+  checkTupleArrayMethods: false,
 };
 `;
 
@@ -947,6 +961,73 @@ function processTypeLiteral(interfaceDeclaration: TypeLiteralNode): string[] {
   return propertiesCheckCode;
 }
 
+/**
+ * For a complex (object) type used as a property value, generates a thorough runtime check.
+ *
+ * - When `preferReuseCastFunctions` is true and the type has a named declaration (interface or
+ *   type alias), emits a call to the existing cast function, e.g. `CastToVector2Like(obj[0]) !== null`.
+ * - Otherwise inlines per-property checks with a null guard on the element itself, e.g.
+ *   `(obj[0] != null && typeof(obj[0].x) === "number" && typeof(obj[0].y) === "number")`.
+ *
+ * Returns `null` when the type has no properties and no better check can be produced.
+ */
+function generateComplexTypeCheck(
+  propRef: string,
+  propType: Type<ts.Type>,
+  location: TypeAliasDeclaration,
+  genFunctionImportsRef: Map<SourceFile, Set<string>>,
+  currentSourceFile: SourceFile,
+  config: Required<GenCastConfig>
+): string | null {
+  const properties = propType.getProperties();
+  if (properties.length === 0) return null;
+
+  // preferReuseCastFunctions: delegate to an existing cast function if one can be found
+  if (config.preferReuseCastFunctions) {
+    // For type aliases (e.g. `type Vector2Like = { ... }`), getSymbol() returns the symbol of the
+    // underlying anonymous object structure, NOT the alias. getAliasSymbol() correctly returns the
+    // type alias symbol. For interfaces, getSymbol() works fine. Prefer aliasSymbol.
+    const symbol = propType.getAliasSymbol() ?? propType.getSymbol();
+    const decls = symbol?.getDeclarations() ?? [];
+    const decl = decls.find(
+      (d) =>
+        d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+        d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+    );
+    if (decl && symbol) {
+      const typeName = symbol.getName();
+      const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+      const declFile = decl.getSourceFile();
+      if (declFile.getFilePath() !== currentSourceFile.getFilePath()) {
+        const funcSet = genFunctionImportsRef.get(declFile) ?? new Set<string>();
+        funcSet.add(funcName);
+        genFunctionImportsRef.set(declFile, funcSet);
+      }
+      return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
+    }
+  }
+
+  // Inline: null-guard the element and then check each of its properties
+  const nullCheck = config.strictNullCheck
+    ? `${propRef} !== null && ${propRef} !== undefined`
+    : `${propRef} != null`;
+
+  const subChecks: string[] = [nullCheck];
+  properties.forEach((prop) => {
+    const pType = prop.getTypeAtLocation(location);
+    const pName = prop.getName();
+    const pRef = /^\d+$/.test(pName) ? `${propRef}[${pName}]` : `${propRef}.${pName}`;
+
+    if (pType.isString() || pType.isNumber() || pType.isBoolean()) {
+      subChecks.push(`typeof(${pRef}) === "${pType.getText()}"`);
+    } else {
+      subChecks.push(`typeof(${pRef}) !== "undefined"`);
+    }
+  });
+
+  return `(${subChecks.join(' && ')})`;
+}
+
 function processTypeAlias(
   typeAliasDeclaration: TypeAliasDeclaration,
   importsRef: Map<SourceFile, Map<string, boolean>>,
@@ -973,6 +1054,7 @@ function processTypeAlias(
       props.forEach((prop) => {
         const propType = prop.getTypeAtLocation(typeAliasDeclaration);
         const propName = prop.getName();
+        const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
 
         // Skip optional properties, any types, and generic types
         if (propType.isAny() || propType.getTypeArguments().length > 0) {
@@ -985,30 +1067,39 @@ function processTypeAlias(
 
         if (isNullable) {
           propertiesCheckCode.push(
-            `(typeof(obj.${propName}) === "${propType.getText()}" || obj.${propName} === null)`
+            `(typeof(${propRef}) === "${propType.getText()}" || ${propRef} === null)`
           );
         } else if (isStringLiteral) {
-          propertiesCheckCode.push(`obj.${propName} === ${propType.getText()}`);
+          propertiesCheckCode.push(`${propRef} === ${propType.getText()}`);
         } else if (isStringUnion) {
           const checks = propType.getUnionTypes()
-            .map(t => `obj.${propName} === ${(t as Type<ts.Type>).getText()}`)
+            .map(t => `${propRef} === ${(t as Type<ts.Type>).getText()}`)
             .join(' || ');
           propertiesCheckCode.push(`(${checks})`);
         } else if (propType.isString() || propType.isNumber() || propType.isBoolean()) {
-          propertiesCheckCode.push(`typeof(obj.${propName}) === "${propType.getText()}"`);
+          propertiesCheckCode.push(`typeof(${propRef}) === "${propType.getText()}"`);
         } else {
-          // For complex types, just check existence
-          propertiesCheckCode.push(`typeof(obj.${propName}) !== "undefined"`);
+          // For complex types, generate a thorough check (or fall back to existence check)
+          const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config);
+          propertiesCheckCode.push(complexCheck ?? `typeof(${propRef}) !== "undefined"`);
         }
       });
     });
   } else {
-    // Regular object type
-    const properties = type.getProperties();
+    // Regular object type (or tuple)
+    // For tuples, getProperties() includes all inherited Array prototype methods (reverse, slice,
+    // etc.) in addition to the index properties (0, 1, ...). Unless the user opts in, filter
+    // those out so the generated cast only checks the actual tuple elements.
+    const isTuple = type.isTuple();
+    const rawProperties = type.getProperties();
+    const properties = (isTuple && !config.checkTupleArrayMethods)
+      ? rawProperties.filter((p) => /^\d+$/.test(p.getName()))
+      : rawProperties;
 
     properties.forEach((prop) => {
       const propType = prop.getTypeAtLocation(typeAliasDeclaration);
       const propName = prop.getName();
+      const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
 
       // Skip optional properties, any types, and generic types
       if (propType.isAny() || propType.getTypeArguments().length > 0) {
@@ -1022,23 +1113,24 @@ function processTypeAlias(
       // Check if it's a method
       const callSignatures = propType.getCallSignatures();
       if (callSignatures.length > 0) {
-        propertiesCheckCode.push(`typeof(obj.${propName}) === "function"`);
+        propertiesCheckCode.push(`typeof(${propRef}) === "function"`);
       } else if (isNullable) {
         propertiesCheckCode.push(
-          `(typeof(obj.${propName}) === "${propType.getText()}" || obj.${propName} === null)`
+          `(typeof(${propRef}) === "${propType.getText()}" || ${propRef} === null)`
         );
       } else if (isStringLiteral) {
-        propertiesCheckCode.push(`obj.${propName} === ${propType.getText()}`);
+        propertiesCheckCode.push(`${propRef} === ${propType.getText()}`);
       } else if (isStringUnion) {
         const checks = propType.getUnionTypes()
-          .map(t => `obj.${propName} === ${(t as Type<ts.Type>).getText()}`)
+          .map(t => `${propRef} === ${(t as Type<ts.Type>).getText()}`)
           .join(' || ');
         propertiesCheckCode.push(`(${checks})`);
       } else if (propType.isString() || propType.isNumber() || propType.isBoolean()) {
-        propertiesCheckCode.push(`typeof(obj.${propName}) === "${propType.getText()}"`);
+        propertiesCheckCode.push(`typeof(${propRef}) === "${propType.getText()}"`);
       } else {
-        // For complex types, just check existence
-        propertiesCheckCode.push(`typeof(obj.${propName}) !== "undefined"`);
+        // For complex types, generate a thorough check (or fall back to existence check)
+        const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config);
+        propertiesCheckCode.push(complexCheck ?? `typeof(${propRef}) !== "undefined"`);
       }
     });
   }

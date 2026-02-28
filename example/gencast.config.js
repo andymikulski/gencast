@@ -13,4 +13,5 @@ module.exports = {
   removeIPrefix: true,
   failureReturnValue: 'null',
   strictNullCheck: true,
+  checkTupleArrayMethods: false,
 };
