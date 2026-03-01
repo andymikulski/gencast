@@ -1275,7 +1275,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
                 const propName = prop.getName();
                 const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
                 // Skip optional properties and any types; handle arrays before generic bailout
-                if (propType.isAny()) {
+                if (propType.isAny() || !!(prop.getFlags() & ts_morph_1.ts.SymbolFlags.Optional)) {
                     return;
                 }
                 // Handle array property types
@@ -1330,7 +1330,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
             const propName = prop.getName();
             const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
             // Skip optional properties and any types; handle arrays before generic bailout
-            if (propType.isAny()) {
+            if (propType.isAny() || !!(prop.getFlags() & ts_morph_1.ts.SymbolFlags.Optional)) {
                 return;
             }
             // Handle array property types

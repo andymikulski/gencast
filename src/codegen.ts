@@ -1665,7 +1665,7 @@ function processTypeAlias(
         const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
 
         // Skip optional properties and any types; handle arrays before generic bailout
-        if (propType.isAny()) {
+        if (propType.isAny() || !!(prop.getFlags() & ts.SymbolFlags.Optional)) {
           return;
         }
 
@@ -1723,7 +1723,7 @@ function processTypeAlias(
       const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
 
       // Skip optional properties and any types; handle arrays before generic bailout
-      if (propType.isAny()) {
+      if (propType.isAny() || !!(prop.getFlags() & ts.SymbolFlags.Optional)) {
         return;
       }
 
