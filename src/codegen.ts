@@ -1361,7 +1361,7 @@ function processInterface(
       } else if (i.isKind(ts.SyntaxKind.TypeLiteral)) {
         // Non-interface base (e.g. an inline object type or a type alias resolved to a type
         // literal) — there is no separately generated cast function to call, so always inline.
-        const subProps = processTypeLiteral(<TypeLiteralNode>i);
+        const subProps = processTypeLiteral(<TypeLiteralNode>i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
         propertiesCheckCode.push(...subProps);
       }
     });
@@ -1372,7 +1372,7 @@ function processInterface(
       }
 
       if (i.isKind(ts.SyntaxKind.TypeLiteral)) {
-        const subProps = processTypeLiteral(<TypeLiteralNode>i);
+        const subProps = processTypeLiteral(<TypeLiteralNode>i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
         propertiesCheckCode.push(...subProps);
       } else if (i.isKind(ts.SyntaxKind.InterfaceDeclaration)) {
         // Only process as InterfaceDeclaration if it actually is one
@@ -1400,11 +1400,21 @@ function processInterface(
   // Check the fields for the given interface, confirming the types are correct
   interfaceDeclaration.getProperties().forEach((prop) => {
     const type: Type<ts.Type> = prop.getType();
-    if (
-      prop.hasQuestionToken() ||
-      type.isAny() ||
-      type.getTypeArguments().length > 0
-    ) {
+    const propName = prop.getName();
+    if (prop.hasQuestionToken() || type.isAny()) {
+      return;
+    }
+
+    // Handle array property types before the generic type bailout
+    if (type.isArray()) {
+      const elementType = type.getArrayElementType();
+      propertiesCheckCode.push(elementType
+        ? generateArrayPropertyCheck(`obj.${propName}`, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+        : `Array.isArray(obj.${propName})`);
+      return;
+    }
+
+    if (type.getTypeArguments().length > 0) {
       return;
     }
 
@@ -1412,7 +1422,6 @@ function processInterface(
     const isStringLiteral = type.isStringLiteral();
     const isStringUnion = type.isUnion() && type.getUnionTypes().every(t => t.isStringLiteral());
 
-    const propName = prop.getName();
     if (type.isAnonymous()) {
       // Actually a method but is showing up as a property! Again, can't check the return type.
       propertiesCheckCode.push(`typeof(obj.${propName}) === "function"`);
@@ -1445,22 +1454,37 @@ function processInterface(
   return propertiesCheckCode;
 }
 
-function processTypeLiteral(interfaceDeclaration: TypeLiteralNode): string[] {
+function processTypeLiteral(
+  interfaceDeclaration: TypeLiteralNode,
+  genFunctionImportsRef?: Map<SourceFile, Set<string>>,
+  currentSourceFile?: SourceFile,
+  config?: Required<GenCastConfig>,
+  cyclicFilePaths?: Set<string>
+): string[] {
   const propertiesCheckCode: string[] = [];
 
   // Check the fields for the given interface, confirming the types are correct
   interfaceDeclaration.getProperties().forEach((prop) => {
     const type: Type<ts.Type> = prop.getType();
-    if (
-      prop.hasQuestionToken() ||
-      type.isAny() ||
-      type.getTypeArguments().length > 0
-    ) {
+    const propName = prop.getName();
+    if (prop.hasQuestionToken() || type.isAny()) {
+      return;
+    }
+
+    // Handle array property types before the generic type bailout
+    if (type.isArray() && genFunctionImportsRef && currentSourceFile && config) {
+      const elementType = type.getArrayElementType();
+      propertiesCheckCode.push(elementType
+        ? generateArrayPropertyCheck(`obj.${propName}`, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+        : `Array.isArray(obj.${propName})`);
+      return;
+    }
+
+    if (type.getTypeArguments().length > 0) {
       return;
     }
 
     const isNullable = Utils.checkTypeNullable(type, prop);
-    const propName = prop.getName();
     if (type.isAnonymous()) {
       // Actually a method but is showing up as a property! Again, can't check the return type.
       propertiesCheckCode.push(`typeof(obj.${propName}) === "function"`);
@@ -1555,6 +1579,62 @@ function generateComplexTypeCheck(
   return `(${subChecks.join(' && ')})`;
 }
 
+/**
+ * Generates a runtime check expression for an array-typed property.
+ *
+ * - For primitive element types (`string`, `number`, `boolean`) emits an `.every()`
+ *   inline check: `Array.isArray(propRef) && propRef.every(item => typeof item === "...")`
+ * - For named object types (interfaces / type aliases) with an available cast function,
+ *   delegates to it: `Array.isArray(propRef) && propRef.every(item => CastToX(item) !== null)`
+ * - Falls back to a bare `Array.isArray(propRef)` when the element type cannot be resolved.
+ */
+function generateArrayPropertyCheck(
+  propRef: string,
+  elementType: Type<ts.Type>,
+  genFunctionImportsRef: Map<SourceFile, Set<string>>,
+  currentSourceFile: SourceFile,
+  config: Required<GenCastConfig>,
+  cyclicFilePaths: Set<string> = new Set()
+): string {
+  const failureValue = config.failureReturnValue;
+  const isJS = config.outputLanguage === 'js';
+  const itemParam = isJS ? 'item' : '(item: unknown)';
+  const base = `Array.isArray(${propRef})`;
+
+  // Primitive element types
+  if (elementType.isString()) return `${base} && ${propRef}.every(${itemParam} => typeof item === "string")`;
+  if (elementType.isNumber()) return `${base} && ${propRef}.every(${itemParam} => typeof item === "number")`;
+  if (elementType.isBoolean()) return `${base} && ${propRef}.every(${itemParam} => typeof item === "boolean")`;
+
+  // Named object type (interface or type alias) — call its cast function in .every()
+  if (elementType.isObject()) {
+    const symbol = elementType.getAliasSymbol() ?? elementType.getSymbol();
+    const decl = (symbol?.getDeclarations() ?? []).find(
+      (d) =>
+        d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+        d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+    );
+    if (decl && symbol) {
+      const declFile = decl.getSourceFile();
+      const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
+      const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
+      if (!wouldCycle) {
+        const typeName = symbol.getName();
+        const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+        if (isCrossFile) {
+          const funcSet = genFunctionImportsRef.get(declFile) ?? new Set<string>();
+          funcSet.add(funcName);
+          genFunctionImportsRef.set(declFile, funcSet);
+        }
+        return `${base} && ${propRef}.every(${itemParam} => ${funcName}(item) !== ${failureValue})`;
+      }
+    }
+  }
+
+  // Fallback: just confirm it is an array
+  return base;
+}
+
 function processTypeAlias(
   typeAliasDeclaration: TypeAliasDeclaration,
   importsRef: Map<SourceFile, Map<string, boolean>>,
@@ -1584,8 +1664,21 @@ function processTypeAlias(
         const propName = prop.getName();
         const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
 
-        // Skip optional properties, any types, and generic types
-        if (propType.isAny() || propType.getTypeArguments().length > 0) {
+        // Skip optional properties and any types; handle arrays before generic bailout
+        if (propType.isAny()) {
+          return;
+        }
+
+        // Handle array property types
+        if (propType.isArray()) {
+          const elementType = propType.getArrayElementType();
+          propertiesCheckCode.push(elementType
+            ? generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+            : `Array.isArray(${propRef})`);
+          return;
+        }
+
+        if (propType.getTypeArguments().length > 0) {
           return;
         }
 
@@ -1629,8 +1722,21 @@ function processTypeAlias(
       const propName = prop.getName();
       const propRef = /^\d+$/.test(propName) ? `obj[${propName}]` : `obj.${propName}`;
 
-      // Skip optional properties, any types, and generic types
-      if (propType.isAny() || propType.getTypeArguments().length > 0) {
+      // Skip optional properties and any types; handle arrays before generic bailout
+      if (propType.isAny()) {
+        return;
+      }
+
+      // Handle array property types
+      if (propType.isArray()) {
+        const elementType = propType.getArrayElementType();
+        propertiesCheckCode.push(elementType
+          ? generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+          : `Array.isArray(${propRef})`);
+        return;
+      }
+
+      if (propType.getTypeArguments().length > 0) {
         return;
       }
 
