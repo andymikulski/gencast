@@ -42,7 +42,7 @@ Install the package locally in another project to test:
 
 ```bash
 # In another test project
-npm install /path/to/gencast-ts
+npm install /path/to/gencast
 
 # Or using the tarball
 npm install /path/to/gencast-1.0.0.tgz
