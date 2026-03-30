@@ -29,10 +29,12 @@ export function CastToUser(obj: any): IUser | null {
 
 ## Installation
 
+Install directly from GitHub:
+
 ```bash
-npm install --save-dev gencast
+npm install --save-dev github:andymikulski/gencast
 # or
-yarn add -D gencast
+yarn add -D github:andymikulski/gencast
 ```
 
 ## Quick Start
@@ -53,8 +55,6 @@ yarn add -D gencast
 npm run gencast init
 # or
 yarn gencast init
-# or
-npx gencast init
 ```
 
 This creates a `gencast.config.js` file with all available options and their defaults.
@@ -65,8 +65,6 @@ This creates a `gencast.config.js` file with all available options and their def
 npm run gencast
 # or
 yarn gencast
-# or
-npx gencast
 ```
 
 4. **Use the generated casting functions:**
@@ -112,7 +110,7 @@ gencast --help
 Create a `gencast.config.js` file in your project root (optional):
 
 ```bash
-npx gencast init
+npm run gencast init
 ```
 
 This will create a configuration file with all available options:
