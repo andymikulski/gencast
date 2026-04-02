@@ -4,6 +4,31 @@
 
 GenCast automatically generates type-safe runtime casting functions for your TypeScript interfaces. It crawls your TypeScript project and creates `.gen.ts` files with `CastTo*` functions that validate object shapes at runtime using duck typing.
 
+
+A quick example showing the power of GenCast:
+
+```
+class Weapon {
+
+  /**
+    * If this weapon hits a target, the weapon then goes on to check if it should trigger corresponding
+    * effects based on the type of the target. For example, if the target is damageable, it takes damage.
+    * If the target is a goblin, it takes double damage.
+    */
+  hitTarget(target: any) {
+    // Check if the target implements IDamageable
+    const damageable = CastToDamageable(target);
+    // Proper typing comes back from the cast; so you know this is a safe call.
+    damageable?.takeDamage(this.attackPower);
+
+    // Goblins get double damage - `Goblin` would probably be an actual class and not just an interface.
+    if (CastToGoblin(target)) {
+      damageable?.takeDamage(this.attackPower);
+    }
+  }
+}
+```
+
 ## Why GenCast?
 
 TypeScript's type system is erased at runtime, meaning you can't validate if an `unknown` or `any` value matches an interface. GenCast solves this by generating runtime validators that check if an object has the correct shape.

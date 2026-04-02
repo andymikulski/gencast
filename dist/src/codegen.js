@@ -512,8 +512,8 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         stringLiteralTypeAliases.length == 0) {
         return;
     }
-    // show file name in bold
-    console.log(`\x1b[1m${sourceFile.getBaseName()}\x1b[0m`);
+    // show relative file path name in bold (relative to project base dir)
+    console.log(`\x1b[1m${path_1.default.relative(process.cwd(), sourceFile.getFilePath())}\x1b[0m`);
     // Compute which source files would create circular dependencies if we imported their
     // generated cast functions from this file's gen file.
     const cyclicFilePaths = config.preferReuseCastFunctions
@@ -521,7 +521,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         : new Set();
     // if (cyclicFilePaths.size > 0) {
     // const names = [...cyclicFilePaths].map((p) => path.basename(p)).join(', ');
-    // console.log(`\t\x1b[33mCyclic import warning: ${names} - falling back to inline checks.\x1b[0m`);
+    // console.log(`  \x1b[33mCyclic import warning: ${names} - falling back to inline checks.\x1b[0m`);
     // }
     // Map<SourceFile, Map<name, isDefault>>
     let typeImports = new Map();
@@ -538,7 +538,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         if (compiledPropChecks.length === 0) {
             const color = config.outputEmptyInterfaces ? '\x1b[33m' : '\x1b[31m';
             // console.warn(
-            //   `\t${color}\tNo prop checks for "${interfaceName}"\x1b[0m`
+            //   `  ${color}\tNo prop checks for "${interfaceName}"\x1b[0m`
             // );
             if (!config.outputEmptyInterfaces) {
                 return;
@@ -674,7 +674,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
   `;
         }
         // print with color orange
-        console.log(`\t\x1b[38;5;208m${className}\x1b[0m`);
+        console.log(`  \x1b[38;5;208m${className}\x1b[0m`);
     });
     // for each type alias found in this source file...
     typeAliases.forEach((typeAlias) => {
@@ -685,7 +685,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config, cyclicFilePaths);
         if (compiledPropChecks.length === 0) {
             const color = config.outputEmptyInterfaces ? '🟨' : '❌';
-            console.warn(`\t${color} No prop checks found for type "${typeName}"`);
+            console.warn(`  ${color} No prop checks found for type "${typeName}"`);
             if (!config.outputEmptyInterfaces) {
                 return;
             }
@@ -791,7 +791,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         }
         else {
             // Fallback - shouldn't happen given our filtering
-            console.warn(`\t⚠️ Unknown primitive type for "${typeName}"`);
+            console.warn(`  ⚠️ Unknown primitive type for "${typeName}"`);
             return;
         }
         // Add type to imports
@@ -816,7 +816,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
   `;
         }
         // Use blue color for primitive types
-        console.log(`\t\x1b[36m${typeName}\x1b[0m`);
+        console.log(`  \x1b[36m${typeName}\x1b[0m`);
     });
     // for each string literal type alias found in this source file...
     stringLiteralTypeAliases.forEach((typeAlias) => {
@@ -838,7 +838,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             checks = [`obj === ${type.getText()}`];
         }
         else {
-            console.warn(`\t⚠️ Unexpected type for string literal "${typeName}"`);
+            console.warn(`  ⚠️ Unexpected type for string literal "${typeName}"`);
             return;
         }
         // Add type to imports
@@ -864,7 +864,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
   `;
         }
         // Use teal color for string literal types
-        console.log(`\t\x1b[36m${typeName}\x1b[0m`);
+        console.log(`  \x1b[36m${typeName}\x1b[0m`);
     });
     if (!hasOutput) {
         return;
@@ -1006,7 +1006,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                     // Importing this base's cast function would create a circular dependency between
                     // generated files - fall back to inlining all its property checks instead.
                     const baseName = baseInterface.getName();
-                    console.log(`\t\t↳ ${interfaceName} extends ${baseName}: inlining (cycle detected)`);
+                    console.log(`  \t↳ ${interfaceName} extends ${baseName}: inlining (cycle detected)`);
                     const subProps = processInterface(baseInterface, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths);
                     propertiesCheckCode.push(...subProps);
                 }
@@ -1101,7 +1101,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
     });
     if (!isInherited) {
         // green
-        console.log(`\t\x1b[32m${interfaceName}\x1b[0m`);
+        console.log(`  \x1b[32m${interfaceName}\x1b[0m`);
     }
     return propertiesCheckCode;
 }
@@ -1181,7 +1181,7 @@ function generateComplexTypeCheck(propRef, propType, location, genFunctionImport
                 return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
             }
             // wouldCycle === true: fall through to the inline check below
-            console.log(`\t\t↳ ${propRef} (${symbol.getName()}): inlining (cycle detected)`);
+            console.log(`  \t↳ ${propRef} (${symbol.getName()}): inlining (cycle detected)`);
         }
     }
     // Inline: null-guard the element and then check each of its properties
@@ -1367,6 +1367,6 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
         });
     }
     //  same blue as other types
-    console.log(`\t\x1b[36m${typeName}\x1b[0m`);
+    console.log(`  \x1b[36m${typeName}\x1b[0m`);
     return propertiesCheckCode;
 }
