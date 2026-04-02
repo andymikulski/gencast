@@ -15,25 +15,25 @@ When called, the weapons use casts to look for relevant interfaces and apply dam
 ```ts
 
 // Generic interface describing an entity that can take damage.
-// Typically you'd want more fields like `health`.
 interface IDamageable {
   takeDamage(amount: number): void;
 }
 
-// A generic faction system used to show how the bow can target specific guilds when applying damage.
-type Guild = "Red" | "Blue" | "Green";
+// Generic faction system
+type GuildName = "Red" | "Blue" | "Green";
 interface IGuildMember {
-  guild: Guild;
+  guild: GuildName;
 }
 
-// Couple of monsters to attack!
-// Note they have slightly different behavior; Goblins belong to a Guild, and the Dragon takes less damage.
+// Goblins can be damaged, and they also belong to guilds.
 class Goblin implements IDamageable, IGuildMember {
-  public guild: Guild;
+  public guild: GuildName;
   takeDamage(amount: number) {
     console.log(`Goblin takes ${amount} damage!`);
   }
 }
+
+// Dragons can be damaged, but they have tough scales that reduce incoming damage by half.
 class Dragon implements IDamageable {
   takeDamage(amount: number) {
     const adjusted = amount / 2;
@@ -41,9 +41,22 @@ class Dragon implements IDamageable {
   }
 }
 
+// Even inanimate objects can be damageable! The chair takes damage and can break if hit hard enough.
+class Chair implements IDamageable {
+  takeDamage(amount: number) {
+    console.log(`Chair takes ${amount} damage!`);
+    if (amount > 10) {
+      console.log(`The chair breaks!`);
+    }
+  }
+}
+
+// -----
+
 // Generic weapon interface. Note this is used by both the Sword and Bow.
 interface IWeapon {
   hitTarget(target: any): void;
+  attackPower: number;
 }
 
 // The sword damages anything, but does 2X damage to Goblins.
@@ -69,10 +82,10 @@ class SuperSword implements IWeapon {
 // The bow works differently from the sword; it ONLY damages RED guild members.
 class ElvenBow implements IWeapon {
   hitTarget(target: any) {
-    const guildMember = CastToGuildMember(target);
-    if (guildMember?.guild === 'Red') {
-      const damageable = CastToDamageable(target);
-      damageable?.takeDamage(this.attackPower);
+    // Simply check if the target is a member of the RED guild.
+    // Variables are not used here for brevity; you can often one-line the cast and API call in one go.
+    if (CastToGuildMember(target)?.guild === 'Red') {
+      CastToDamageable(target)?.takeDamage(this.attackPower);
     }
   }
 }
