@@ -258,9 +258,6 @@ module.exports = {
   // When false, uses the more concise loose check: obj != null
   strictNullCheck: false,
 
-  // Include inherited Array prototype method checks in tuple cast functions (default: false)
-  includeTupleArrayMethods: false,
-
   // Cache cast results per-object using a WeakMap for faster repeated calls (default: false)
   enableWeakMapCaching: false,
 };
@@ -614,42 +611,6 @@ When `true`, each generated cast function stores its result in a module-level `W
 The `WeakMap` is lazily created on first use, so there is zero overhead for code paths that never call the function. Only applies to interface and object-type cast functions — primitive and string-literal casts are not affected.
 
 This is most beneficial in hot code paths where the same object is validated repeatedly (e.g. inside a rendering loop or a high-frequency event handler).
-
----
-
-### `includeTupleArrayMethods`
-
-**Default:** `false`
-
-Applies only when `generateTypeCasts` is `true` and a type alias is a tuple, e.g. `type Triple = [string, string, string]`.
-
-At the TypeScript type-system level, a tuple is a subtype of `Array`, so `ts-morph` reports every inherited `Array` prototype method (`push`, `pop`, `slice`, `reverse`, etc.) as a property alongside the actual indexed elements (`0`, `1`, `2`, …). By default (`false`), GenCast filters those inherited methods out and only checks the real tuple elements — which is almost always what you want:
-
-```typescript
-// type Triple = [string, string, string]
-
-// includeTupleArrayMethods: false (default) — only the elements
-export function CastToTriple(obj: any): Triple | null {
-  return (obj != null &&
-    typeof(obj[0]) === "string" &&
-    typeof(obj[1]) === "string" &&
-    typeof(obj[2]) === "string") ? obj : null;
-}
-
-// includeTupleArrayMethods: true — elements + every Array prototype method
-export function CastToTriple(obj: any): Triple | null {
-  return (obj != null &&
-    typeof(obj[0]) === "string" &&
-    typeof(obj[1]) === "string" &&
-    typeof(obj[2]) === "string" &&
-    typeof(obj.push) === "function" &&
-    typeof(obj.pop) === "function" &&
-    typeof(obj.slice) === "function" &&
-    /* … many more … */) ? obj : null;
-}
-```
-
-The `true` output is technically correct, but verifying `push`/`pop`/`slice` on an `any` value adds no practical safety — any plain array already satisfies those checks. Leave this `false`.
 
 ---
 
