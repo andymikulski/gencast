@@ -5,29 +5,80 @@
 GenCast automatically generates type-safe runtime casting functions for your TypeScript interfaces. It crawls your TypeScript project and creates `.gen.ts` files with `CastTo*` functions that validate object shapes at runtime using duck typing.
 
 
-A quick example showing the power of GenCast:
+## Example
 
-```
-class Weapon {
+A quick example showing the power of GenCast. This demonstrates a simple weapon/damage system where Goblins and Dragons can be damaged by weapons at runtime.
 
+When called, the weapons use casts to look for relevant interfaces and apply damage/effects accordingly. This produces a very versatile system. As we can see here, a few lines of code can create a complex set of weapons and enemies with different interactions.
+
+
+```ts
+
+// Generic interface describing an entity that can take damage.
+// Typically you'd want more fields like `health`.
+interface IDamageable {
+  takeDamage(amount: number): void;
+}
+
+// A generic faction system used to show how the bow can target specific guilds when applying damage.
+type Guild = "Red" | "Blue" | "Green";
+interface IGuildMember {
+  guild: Guild;
+}
+
+// Couple of monsters to attack!
+// Note they have slightly different behavior; Goblins belong to a Guild, and the Dragon takes less damage.
+class Goblin implements IDamageable, IGuildMember {
+  public guild: Guild;
+  takeDamage(amount: number) {
+    console.log(`Goblin takes ${amount} damage!`);
+  }
+}
+class Dragon implements IDamageable {
+  takeDamage(amount: number) {
+    const adjusted = amount / 2;
+    console.log(`Dragon takes ${adjusted} damage!`);
+  }
+}
+
+// Generic weapon interface. Note this is used by both the Sword and Bow.
+interface IWeapon {
+  hitTarget(target: any): void;
+}
+
+// The sword damages anything, but does 2X damage to Goblins.
+class SuperSword implements IWeapon {
   /**
     * If this weapon hits a target, the weapon then goes on to check if it should trigger corresponding
     * effects based on the type of the target. For example, if the target is damageable, it takes damage.
     * If the target is a goblin, it takes double damage.
     */
   hitTarget(target: any) {
-    // Check if the target implements IDamageable
+    // Check if the target can be damaged; if it implements IDamageable, we can apply damage here.
+    // In this example, Dragon and Goblin would both be hit.
     const damageable = CastToDamageable(target);
-    // Proper typing comes back from the cast; so you know this is a safe call.
     damageable?.takeDamage(this.attackPower);
 
-    // Goblins get double damage - `Goblin` would probably be an actual class and not just an interface.
+    // Goblins get double damage!
     if (CastToGoblin(target)) {
       damageable?.takeDamage(this.attackPower);
     }
   }
 }
+
+// The bow works differently from the sword; it ONLY damages RED guild members.
+class ElvenBow implements IWeapon {
+  hitTarget(target: any) {
+    const guildMember = CastToGuildMember(target);
+    if (guildMember?.guild === 'Red') {
+      const damageable = CastToDamageable(target);
+      damageable?.takeDamage(this.attackPower);
+    }
+  }
+}
 ```
+
+
 
 ## Why GenCast?
 
