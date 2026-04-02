@@ -13,6 +13,7 @@ exports.loadConfig = loadConfig;
 exports.initConfig = initConfig;
 exports.updateVSCodeSettings = updateVSCodeSettings;
 exports.generateCodegen = generateCodegen;
+exports.generateUtilityCastsFile = generateUtilityCastsFile;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
 const ts_morph_1 = require("ts-morph");
@@ -39,14 +40,10 @@ const DEFAULT_CONFIG = {
     outputEmptyInterfaces: true,
     generateClassCasts: false,
     generateTypeCasts: false,
-    generatePrimitiveTypeCasts: false,
-    generateStringLiteralTypeCasts: false,
     removeIPrefix: true,
     failureReturnValue: 'null',
     strictNullCheck: false,
     includeTupleArrayMethods: false,
-    generateUtilityCasts: false,
-    utilityCastsPath: './gencast-utils.gen.[ext]',
     enableWeakMapCaching: false,
 };
 /**
@@ -109,17 +106,9 @@ module.exports = {
   // Generate cast functions for classes using instanceof (default: false)
   generateClassCasts: false,
 
-  // Generate cast functions for type aliases with object types (default: false)
-  // Primitive type aliases like 'type ID = number' are automatically skipped
+  // Generate cast functions for all exported type aliases (default: false)
+  // Covers object types, primitive aliases (type ID = number), and string literal unions (type Status = 'active' | 'inactive')
   generateTypeCasts: false,
-
-  // Generate cast functions for primitive type aliases (default: false)
-  // Example: type ID = number -> CastToID checks typeof === 'number'
-  generatePrimitiveTypeCasts: false,
-
-  // Generate cast functions for string literal unions (default: false)
-  // Example: type Status = 'active' | 'inactive' -> validates string matches allowed values
-  generateStringLiteralTypeCasts: false,
 
   // Only generate for interfaces with 'I' prefix (default: false)
   requireIPrefix: false,
@@ -140,13 +129,6 @@ module.exports = {
   // Include Array prototype method checks (e.g. reverse, slice, shift) in tuple casts (default: false)
   // Tuples are rarely operated on as generic arrays, so these checks are omitted by default
   includeTupleArrayMethods: false,
-
-  // Generate a shared utility file with generic cast helpers (default: false)
-  // Includes CastToClass<T>(obj, ctor) for generic instanceof checks
-  generateUtilityCasts: false,
-
-  // Output path for the utility casts file; supports [ext] placeholder (default: './gencast-utils.gen.[ext]')
-  utilityCastsPath: './gencast-utils.gen.[ext]',
 
   // Cache cast results in a per-function WeakMap keyed on the input object (default: false)
   // Speeds up repeated casts of the same object; only applies to interface/object-type casts
@@ -245,7 +227,7 @@ function generateCodegen(userConfig = {}) {
     };
     // Resolve the tsconfig path
     const tsconfigPath = path_1.default.resolve(process.cwd(), config.tsconfigPath);
-    console.log('GenCast - Generating runtime type casters...');
+    console.log('GenCast - Generating runtime cast methods...');
     console.log(`Using tsconfig: ${tsconfigPath}\n`);
     // Load the source files listed in the tsconfig
     const project = new ts_morph_1.Project();
@@ -259,19 +241,22 @@ function generateCodegen(userConfig = {}) {
         : new Map();
     // Process each file and output the relevant file
     allSourceFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph));
-    // Optionally write the shared utility casts file
-    if (config.generateUtilityCasts) {
-        generateUtilityCastsFile(config);
-    }
-    console.log('\nDone generating interface casters\n');
+    console.log('\nDone generating casts\n');
 }
 /**
  * Writes the shared utility casts file (e.g. `gencast-utils.gen.ts`).
  * Contains generic helpers that are not tied to any specific generated type.
+ *
+ * @param outputFilePath Optional path for the output file. Defaults to `./gencast-utils.gen.[ext]`
+ *   next to the cwd. Supports the `[ext]` placeholder.
+ * @param userConfig Optional config overrides (e.g. `outputLanguage`, `failureReturnValue`, `strictNullCheck`).
  */
-function generateUtilityCastsFile(config) {
+function generateUtilityCastsFile(outputFilePath, userConfig = {}) {
+    const config = { ...DEFAULT_CONFIG, ...userConfig };
     const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
-    const outputPath = path_1.default.resolve(process.cwd(), config.utilityCastsPath.replace('[ext]', ext));
+    const defaultPath = `./gencast-utils.gen.[ext]`;
+    const resolvedTemplate = outputFilePath !== null && outputFilePath !== void 0 ? outputFilePath : defaultPath;
+    const outputPath = path_1.default.resolve(process.cwd(), resolvedTemplate.replace('[ext]', ext));
     const failureValue = config.failureReturnValue;
     const isJS = config.outputLanguage === 'js';
     const nullCheck = config.strictNullCheck
@@ -334,7 +319,7 @@ export function CastToArray<T>(castFn: (obj: any) => T | ${failureValue}, arr: a
 }
 `;
     fs_1.default.writeFileSync(outputPath, content, 'utf8');
-    console.log(`\n👉 gencast-utils`);
+    console.log(`\ngencast-utils`);
 }
 // ---------------------------------------------------------------------------
 // Cycle-detection helpers for preferReuseCastFunctions
@@ -352,7 +337,7 @@ function computeGenImportGraph(sourceFiles, config) {
         sf.getInterfaces()
             .filter((iface) => iface.isExported())
             .forEach((iface) => {
-            // Inheritance — would call the base's cast function
+            // Inheritance - would call the base's cast function
             iface.getBaseDeclarations().forEach((base) => {
                 if (base.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
                     const baseFilePath = base.getSourceFile().getFilePath();
@@ -360,7 +345,7 @@ function computeGenImportGraph(sourceFiles, config) {
                         deps.add(baseFilePath);
                 }
             });
-            // Complex property types — would call the property type's cast function
+            // Complex property types - would call the property type's cast function
             iface.getProperties().forEach((prop) => {
                 collectComplexTypeDep(prop.getType(), sfPath, deps);
             });
@@ -410,7 +395,7 @@ function canReachInGraph(graph, from, to, visited) {
  * `sourceFilePath`'s generated file were to import cast functions from them.
  *
  * A file is "cyclic" with respect to `sourceFilePath` when it can transitively reach
- * `sourceFilePath` in the gen-import dependency graph — meaning the two files would
+ * `sourceFilePath` in the gen-import dependency graph - meaning the two files would
  * mutually import each other's generated files.
  */
 function findCyclicGenImports(graph, sourceFilePath) {
@@ -486,7 +471,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
     let typeAliases = [];
     let primitiveTypeAliases = [];
     let stringLiteralTypeAliases = [];
-    if (config.generateTypeCasts || config.generatePrimitiveTypeCasts || config.generateStringLiteralTypeCasts) {
+    if (config.generateTypeCasts) {
         sourceFile.getTypeAliases().forEach((x) => {
             if (!x.isExported())
                 return;
@@ -495,18 +480,18 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             if (type.isUnion()) {
                 const unionTypes = type.getUnionTypes();
                 const allStringLiterals = unionTypes.every(t => t.isStringLiteral());
-                if (allStringLiterals && config.generateStringLiteralTypeCasts) {
+                if (allStringLiterals && config.generateTypeCasts) {
                     stringLiteralTypeAliases.push(x);
                     return;
                 }
             }
             // Check for single string literal
-            if (type.isStringLiteral() && config.generateStringLiteralTypeCasts) {
+            if (type.isStringLiteral() && config.generateTypeCasts) {
                 stringLiteralTypeAliases.push(x);
                 return;
             }
             // Check for primitive types (number, string, boolean)
-            if (config.generatePrimitiveTypeCasts) {
+            if (config.generateTypeCasts) {
                 if (type.isString() || type.isNumber() || type.isBoolean()) {
                     primitiveTypeAliases.push(x);
                     return;
@@ -527,16 +512,17 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         stringLiteralTypeAliases.length == 0) {
         return;
     }
-    console.log('👉 ' + sourceFile.getBaseName());
+    // show file name in bold
+    console.log(`\x1b[1m${sourceFile.getBaseName()}\x1b[0m`);
     // Compute which source files would create circular dependencies if we imported their
     // generated cast functions from this file's gen file.
     const cyclicFilePaths = config.preferReuseCastFunctions
         ? findCyclicGenImports(genImportGraph, sourceFile.getFilePath())
         : new Set();
-    if (cyclicFilePaths.size > 0) {
-        const names = [...cyclicFilePaths].map((p) => path_1.default.basename(p)).join(', ');
-        console.log(`\t⚠️  Cyclic gen-import detected with: ${names} — falling back to inline checks for those types.`);
-    }
+    // if (cyclicFilePaths.size > 0) {
+    // const names = [...cyclicFilePaths].map((p) => path.basename(p)).join(', ');
+    // console.log(`\t\x1b[33mCyclic import warning: ${names} - falling back to inline checks.\x1b[0m`);
+    // }
     // Map<SourceFile, Map<name, isDefault>>
     let typeImports = new Map();
     let valueImports = new Map();
@@ -550,8 +536,10 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         const interfaceName = int.getName();
         var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config, false, cyclicFilePaths);
         if (compiledPropChecks.length === 0) {
-            const color = config.outputEmptyInterfaces ? '🚸' : '❌';
-            console.warn(`\t${color} No prop checks found for interface "${interfaceName}"`);
+            const color = config.outputEmptyInterfaces ? '\x1b[33m' : '\x1b[31m';
+            // console.warn(
+            //   `\t${color}\tNo prop checks for "${interfaceName}"\x1b[0m`
+            // );
             if (!config.outputEmptyInterfaces) {
                 return;
             }
@@ -685,7 +673,8 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
   }
   `;
         }
-        console.log(`\t${className} (class)`);
+        // print with color orange
+        console.log(`\t\x1b[38;5;208m${className}\x1b[0m`);
     });
     // for each type alias found in this source file...
     typeAliases.forEach((typeAlias) => {
@@ -826,7 +815,8 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
   }
   `;
         }
-        console.log(`\t${typeName} (primitive type)`);
+        // Use blue color for primitive types
+        console.log(`\t\x1b[36m${typeName}\x1b[0m`);
     });
     // for each string literal type alias found in this source file...
     stringLiteralTypeAliases.forEach((typeAlias) => {
@@ -873,7 +863,8 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
   }
   `;
         }
-        console.log(`\t${typeName} (string literal type)`);
+        // Use teal color for string literal types
+        console.log(`\t\x1b[36m${typeName}\x1b[0m`);
     });
     if (!hasOutput) {
         return;
@@ -895,7 +886,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         importString += `import { ${funcArray.join(', ')} } from '${relativePathGen}';
 `;
     }
-    // Generate type imports (for interfaces) — skipped for JS output since there are no type annotations
+    // Generate type imports (for interfaces) - skipped for JS output since there are no type annotations
     if (!isJS) {
         const typeImportItems = typeImports.entries();
         let typeValue;
@@ -1013,7 +1004,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                 const wouldCycle = isCrossFile && cyclicFilePaths.has(baseFile.getFilePath());
                 if (wouldCycle) {
                     // Importing this base's cast function would create a circular dependency between
-                    // generated files — fall back to inlining all its property checks instead.
+                    // generated files - fall back to inlining all its property checks instead.
                     const baseName = baseInterface.getName();
                     console.log(`\t\t↳ ${interfaceName} extends ${baseName}: inlining (cycle detected)`);
                     const subProps = processInterface(baseInterface, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths);
@@ -1034,7 +1025,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
             }
             else if (i.isKind(ts_morph_1.ts.SyntaxKind.TypeLiteral)) {
                 // Non-interface base (e.g. an inline object type or a type alias resolved to a type
-                // literal) — there is no separately generated cast function to call, so always inline.
+                // literal) - there is no separately generated cast function to call, so always inline.
                 const subProps = processTypeLiteral(i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
                 propertiesCheckCode.push(...subProps);
             }
@@ -1109,7 +1100,8 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
         }
     });
     if (!isInherited) {
-        console.log(`\t${interfaceName}`);
+        // green
+        console.log(`\t\x1b[32m${interfaceName}\x1b[0m`);
     }
     return propertiesCheckCode;
 }
@@ -1232,7 +1224,7 @@ function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef,
         return `${base} && ${propRef}.every(${itemParam} => typeof item === "number")`;
     if (elementType.isBoolean())
         return `${base} && ${propRef}.every(${itemParam} => typeof item === "boolean")`;
-    // Named object type (interface or type alias) — call its cast function in .every()
+    // Named object type (interface or type alias) - call its cast function in .every()
     if (elementType.isObject()) {
         const symbol = (_a = elementType.getAliasSymbol()) !== null && _a !== void 0 ? _a : elementType.getSymbol();
         const decl = ((_b = symbol === null || symbol === void 0 ? void 0 : symbol.getDeclarations()) !== null && _b !== void 0 ? _b : []).find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
@@ -1374,6 +1366,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
             }
         });
     }
-    console.log(`\t${typeName} (type)`);
+    //  same blue as other types
+    console.log(`\t\x1b[36m${typeName}\x1b[0m`);
     return propertiesCheckCode;
 }

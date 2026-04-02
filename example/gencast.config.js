@@ -8,8 +8,6 @@ module.exports = {
   outputEmptyInterfaces: true,
   generateClassCasts: false,
   generateTypeCasts: true,
-  generatePrimitiveTypeCasts: true,
-  generateStringLiteralTypeCasts: true,
   requireIPrefix: false,
   removeIPrefix: true,
   failureReturnValue: 'null',

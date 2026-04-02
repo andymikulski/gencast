@@ -47,26 +47,14 @@ export function CastToUser(obj: any): IUser | null {
 ---
 
 ## `generateTypeCasts` (default: `false`)
-If `true`, generates cast functions for exported object type aliases.
+If `true`, generates cast functions for all exported type aliases — object types, primitive aliases, and string literal unions.
 ```typescript
 export type Point = { x: number; y: number };
 // generates: CastToPoint(obj: any): Point | null
-```
 
----
-
-## `generatePrimitiveTypeCasts` (default: `false`)
-If `true`, generates cast functions for primitive type aliases.
-```typescript
 export type ID = number;
 // generates: CastToID(obj: any): ID | null  — checks typeof obj === "number"
-```
 
----
-
-## `generateStringLiteralTypeCasts` (default: `false`)
-If `true`, generates cast functions for string literal union types.
-```typescript
 export type Status = 'active' | 'inactive';
 // generates: CastToStatus(obj: any): Status | null  — validates allowed values
 ```
@@ -130,8 +118,6 @@ module.exports = {
   removeIPrefix: true,
   generateClassCasts: false,
   generateTypeCasts: false,
-  generatePrimitiveTypeCasts: false,
-  generateStringLiteralTypeCasts: false,
   failureReturnValue: 'null',
   strictNullCheck: false,
   includeTupleArrayMethods: false,

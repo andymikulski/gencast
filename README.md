@@ -101,6 +101,15 @@ gencast
 # Create a gencast.config.js configuration file
 gencast init
 
+# Write the shared utility helpers file (CastToClass, CastToArray, etc.)
+gencast utils
+
+# Write utility helpers to a custom path
+gencast utils src/utils/cast-helpers.ts
+
+# Update VS Code settings to exclude generated files
+gencast vscode
+
 # Show help message
 gencast --help
 ```
@@ -148,14 +157,10 @@ module.exports = {
   // Generate cast functions for classes using instanceof checks (default: false)
   generateClassCasts: false,
 
-  // Generate cast functions for object type aliases, e.g. `type Point = { x: number; y: number }` (default: false)
+  // Generate cast functions for all exported type aliases (default: false)
+  // Covers object types (type Point = { x: number; y: number }),
+  // primitive aliases (type ID = number), and string literal unions (type Status = 'active' | 'inactive')
   generateTypeCasts: false,
-
-  // Generate cast functions for primitive type aliases, e.g. `type ID = number` (default: false)
-  generatePrimitiveTypeCasts: false,
-
-  // Generate cast functions for string literal union types, e.g. `type Status = 'active' | 'inactive'` (default: false)
-  generateStringLiteralTypeCasts: false,
 
   // Value returned when a cast fails: 'null' (default) or 'undefined'
   failureReturnValue: 'null',
@@ -166,12 +171,6 @@ module.exports = {
 
   // Include inherited Array prototype method checks in tuple cast functions (default: false)
   includeTupleArrayMethods: false,
-
-  // Generate a utility file with generic cast helpers such as CastToClass<T>(obj, ctor) (default: false)
-  generateUtilityCasts: false,
-
-  // Output path for the utility casts file; [ext] is replaced with 'ts' or 'js' (default: './gencast-utils.gen.[ext]')
-  utilityCastsPath: './gencast-utils.gen.[ext]',
 
   // Cache cast results per-object using a WeakMap for faster repeated calls (default: false)
   enableWeakMapCaching: false,
@@ -297,6 +296,8 @@ export interface Config { debug: boolean; } // no I-prefix
 
 Controls whether cast functions are generated for interfaces that have no properties.
 
+Technically, `{}` in TypeScript is effectively a supertype of all non-nullish values, so an empty interface can be "cast" from any object. GenCast can still generate a function for this case, but it may not be useful and could even be misleading — if you have an empty interface, you probably don't need a cast function for it.
+
 **Input:**
 ```typescript
 export interface IMarker {}
@@ -308,8 +309,6 @@ export function CastToMarker(obj: any): IMarker | null {
   return (obj != null) ? obj : null;
 }
 ```
-
-**With `outputEmptyInterfaces: false`:** `IMarker` is skipped — no function is generated.
 
 ---
 
@@ -435,12 +434,20 @@ export function CastToUserAccount(obj: any): UserAccount | null {
 
 **Default:** `false`
 
-When `true`, generates cast functions for exported **object** type aliases (i.e. `type Foo = { ... }`). The generated checks behave identically to interface casts.
+When `true`, generates cast functions for all exported type aliases. Three flavours are handled automatically based on the shape of the type:
+
+| Alias kind | Example | Check generated |
+|---|---|---|
+| Object type | `type Point = { x: number; y: number }` | property-by-property `typeof` check |
+| Primitive alias | `type ID = number` | `typeof obj === "number"` |
+| String literal union | `type Status = 'active' \| 'inactive'` | equality check against each member |
 
 **Input:**
 ```typescript
 export type Point = { x: number; y: number };
 export type Point3D = Point & { z: number };
+export type ID = number;
+export type Status = 'active' | 'inactive' | 'pending';
 ```
 
 **With `generateTypeCasts: false` (default):** no functions generated.
@@ -452,59 +459,13 @@ export function CastToPoint(obj: any): Point | null {
 }
 
 export function CastToPoint3D(obj: any): Point3D | null {
-  return (obj != null && CastToPoint(obj) && typeof(obj.z) === "number") ? obj : null;
+  return (obj != null && typeof(obj.x) === "number" && typeof(obj.y) === "number" && typeof(obj.z) === "number") ? obj : null;
 }
-```
 
----
-
-### `generatePrimitiveTypeCasts`
-
-**Default:** `false`
-
-When `true`, generates cast functions for type aliases that resolve to a primitive type (`number`, `string`, `boolean`).
-
-**Input:**
-```typescript
-export type ID = number;
-export type Username = string;
-export type IsActive = boolean;
-```
-
-**With `generatePrimitiveTypeCasts: false` (default):** no functions generated.
-
-**With `generatePrimitiveTypeCasts: true`:**
-```typescript
 export function CastToID(obj: any): ID | null {
   return (typeof(obj) === "number") ? obj : null;
 }
 
-export function CastToUsername(obj: any): Username | null {
-  return (typeof(obj) === "string") ? obj : null;
-}
-
-export function CastToIsActive(obj: any): IsActive | null {
-  return (typeof(obj) === "boolean") ? obj : null;
-}
-```
-
----
-
-### `generateStringLiteralTypeCasts`
-
-**Default:** `false`
-
-When `true`, generates cast functions for string literal union types. The check validates the input against every allowed string value using strict equality.
-
-**Input:**
-```typescript
-export type Status = 'active' | 'inactive' | 'pending';
-```
-
-**With `generateStringLiteralTypeCasts: false` (default):** no function generated.
-
-**With `generateStringLiteralTypeCasts: true`:**
-```typescript
 export function CastToStatus(obj: any): Status | null {
   return (obj === "active" || obj === "inactive" || obj === "pending") ? obj : null;
 }
@@ -512,16 +473,24 @@ export function CastToStatus(obj: any): Status | null {
 
 ---
 
-### `generateUtilityCasts` and `utilityCastsPath`
+### `gencast utils`
 
-**Defaults:** `false` / `'./gencast-utils.gen.[ext]'`
+Writes a shared utility file containing generic helpers not tied to any specific type.
 
-When `generateUtilityCasts` is `true`, GenCast writes a single shared utility file containing generic helpers that are not tied to any specific type. The file location is set by `utilityCastsPath`; the `[ext]` placeholder is replaced with `ts` or `js` based on `outputLanguage`.
+```bash
+# Write to the default location (./gencast-utils.gen.ts or .gen.js)
+gencast utils
 
-Currently included utilities:
+# Write to a custom path
+gencast utils src/utils/cast-helpers.ts
+```
 
-- **`CastToClass<T>(obj, ctor)`** — generic `instanceof` check. An alternative to enabling `generateClassCasts` for every class individually.
-- **`CastToArray(castFn, arr)`** — validates every element of an array using a provided cast function. Returns the typed array if all elements pass, or `null`/`undefined` if any element fails.
+The output language (`ts`/`js`) and null-check style are derived from your `gencast.config.js` if one exists, so you don't need to pass any other flags. The `[ext]` placeholder is supported in the path argument.
+
+Currently generated helpers:
+
+- **`CastToClass<T>(obj, ctor)`** — generic `instanceof` check. An alternative to per-class cast functions generated by `generateClassCasts`.
+- **`CastToArray(castFn, arr)`** — validates every element of an array with a cast function. Returns the typed array if all elements pass, or `null`/`undefined` if any fails.
 
 **Generated (`gencast-utils.gen.ts`):**
 ```typescript
@@ -530,15 +499,9 @@ export function CastToClass<T>(obj: any, ctor: new (...args: any[]) => T): T | n
   return (obj != null && obj instanceof ctor) ? obj : null;
 }
 
-export function CastToArray<T>(castFn: (o: any) => T | null, arr: any): T[] | null {
-  if (!Array.isArray(arr)) return null;
-  const result: T[] = [];
-  for (const item of arr) {
-    const cast = castFn(item);
-    if (cast === null) return null;
-    result.push(cast);
-  }
-  return result;
+export function CastToArray<T>(castFn: (obj: any) => T | null, arr: any): T[] | null {
+  if (!Array.isArray(arr)) { return null; }
+  return arr.every((item) => castFn(item) !== null) ? arr as T[] : null;
 }
 ```
 
@@ -563,38 +526,41 @@ The `WeakMap` is lazily created on first use, so there is zero overhead for code
 
 This is most beneficial in hot code paths where the same object is validated repeatedly (e.g. inside a rendering loop or a high-frequency event handler).
 
-**With `enableWeakMapCaching: false` (default):**
-```typescript
-export function CastToUser(obj: any): IUser | null {
-  return (obj != null && typeof(obj.id) === "number" && typeof(obj.name) === "string") ? obj : null;
-}
-```
-
-**With `enableWeakMapCaching: true`:**
-```typescript
-let _wmc_CastToUser: WeakMap<object, boolean> | undefined;
-export function CastToUser(obj: any): IUser | null {
-  if (obj != null && typeof obj === 'object') {
-    if (!_wmc_CastToUser) { _wmc_CastToUser = new WeakMap(); }
-    const _cached = _wmc_CastToUser.get(obj);
-    if (_cached !== undefined) { return _cached ? obj : null; }
-    const _result = (typeof(obj.id) === "number" && typeof(obj.name) === "string");
-    _wmc_CastToUser.set(obj, _result);
-    return _result ? obj : null;
-  }
-  return null;
-}
-```
-
 ---
 
 ### `includeTupleArrayMethods`
 
 **Default:** `false`
 
-Applies only to tuple-typed properties. When `true`, the generated check also verifies that standard `Array` prototype methods (`push`, `pop`, `reverse`, `slice`, etc.) exist on the value. These checks are technically correct but add significant noise to the output, since tuples are almost never used as generic arrays in practice.
+Applies only when `generateTypeCasts` is `true` and a type alias is a tuple, e.g. `type Triple = [string, string, string]`.
 
-Leave this `false` unless you have a specific reason to verify the full `Array` interface at runtime.
+At the TypeScript type-system level, a tuple is a subtype of `Array`, so `ts-morph` reports every inherited `Array` prototype method (`push`, `pop`, `slice`, `reverse`, etc.) as a property alongside the actual indexed elements (`0`, `1`, `2`, …). By default (`false`), GenCast filters those inherited methods out and only checks the real tuple elements — which is almost always what you want:
+
+```typescript
+// type Triple = [string, string, string]
+
+// includeTupleArrayMethods: false (default) — only the elements
+export function CastToTriple(obj: any): Triple | null {
+  return (obj != null &&
+    typeof(obj[0]) === "string" &&
+    typeof(obj[1]) === "string" &&
+    typeof(obj[2]) === "string") ? obj : null;
+}
+
+// includeTupleArrayMethods: true — elements + every Array prototype method
+export function CastToTriple(obj: any): Triple | null {
+  return (obj != null &&
+    typeof(obj[0]) === "string" &&
+    typeof(obj[1]) === "string" &&
+    typeof(obj[2]) === "string" &&
+    typeof(obj.push) === "function" &&
+    typeof(obj.pop) === "function" &&
+    typeof(obj.slice) === "function" &&
+    /* … many more … */) ? obj : null;
+}
+```
+
+The `true` output is technically correct, but verifying `push`/`pop`/`slice` on an `any` value adds no practical safety — any plain array already satisfies those checks. Leave this `false`.
 
 ---
 

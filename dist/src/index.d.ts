@@ -3,4 +3,4 @@
  *
  * This package generates type-safe runtime casting functions based on your TypeScript interfaces.
  */
-export { loadConfig, initConfig, updateVSCodeSettings, GenCastConfig } from './codegen';
+export { loadConfig, initConfig, updateVSCodeSettings, generateUtilityCastsFile, GenCastConfig } from './codegen';

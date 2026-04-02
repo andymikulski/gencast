@@ -5,8 +5,9 @@
  * This package generates type-safe runtime casting functions based on your TypeScript interfaces.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateVSCodeSettings = exports.initConfig = exports.loadConfig = void 0;
+exports.generateUtilityCastsFile = exports.updateVSCodeSettings = exports.initConfig = exports.loadConfig = void 0;
 var codegen_1 = require("./codegen");
 Object.defineProperty(exports, "loadConfig", { enumerable: true, get: function () { return codegen_1.loadConfig; } });
 Object.defineProperty(exports, "initConfig", { enumerable: true, get: function () { return codegen_1.initConfig; } });
 Object.defineProperty(exports, "updateVSCodeSettings", { enumerable: true, get: function () { return codegen_1.updateVSCodeSettings; } });
+Object.defineProperty(exports, "generateUtilityCastsFile", { enumerable: true, get: function () { return codegen_1.generateUtilityCastsFile; } });

@@ -27,8 +27,8 @@ export interface GenCastConfig {
     /**
      * Controls whether the generated output is TypeScript (`.ts`) or plain JavaScript (`.js`).
      *
-     * - `'ts'` — generates typed TypeScript with full type annotations, generics, and `import type` statements.
-     * - `'js'` — generates plain JavaScript with no type annotations. Type imports are omitted; only
+     * - `'ts'` - generates typed TypeScript with full type annotations, generics, and `import type` statements.
+     * - `'js'` - generates plain JavaScript with no type annotations. Type imports are omitted; only
      *   value imports required for `instanceof` checks (class casts) are kept.
      *
      * @default 'ts'
@@ -79,26 +79,14 @@ export interface GenCastConfig {
      */
     generateClassCasts?: boolean;
     /**
-     * If `true`, will generate cast functions for type aliases with object types.
+     * If `true`, will generate cast functions for exported type aliases of all kinds:
+     * - Object types: `type Point = { x: number; y: number }` - property-by-property check
+     * - Primitive aliases: `type ID = number` - `typeof` check
+     * - String literal unions: `type Status = 'active' | 'inactive'` - equality check on each member
      *
      * @default false
      */
     generateTypeCasts?: boolean;
-    /**
-     * If `true`, will generate cast functions for primitive type aliases.
-     * For example, `type ID = number` will generate a function that checks typeof.
-     *
-     * @default false
-     */
-    generatePrimitiveTypeCasts?: boolean;
-    /**
-     * If `true`, will generate cast functions for string literal union types.
-     * For example, `type Status = 'active' | 'inactive'` will generate a function
-     * that validates the string matches one of the allowed values.
-     *
-     * @default false
-     */
-    generateStringLiteralTypeCasts?: boolean;
     /**
      * If `true`, will remove the 'I' prefix from interface names when generating function names.
      * For example, `IUser` will generate `CastToUser` instead of `CastToIUser`.
@@ -128,26 +116,6 @@ export interface GenCastConfig {
      * @default false
      */
     includeTupleArrayMethods?: boolean;
-    /**
-     * If `true`, generates a single utility file containing generic cast helpers that are not
-     * tied to any specific type. Currently includes:
-     *
-     * - `CastToClass<T>(obj, ctor)` — generic instanceof check, so you can write
-     *   `CastToClass(obj, MyClass)` instead of a per-class generated function.
-     *
-     * The output path is controlled by `utilityCastsPath`.
-     *
-     * @default false
-     */
-    generateUtilityCasts?: boolean;
-    /**
-     * The path (relative to cwd) where the utility casts file is written when
-     * `generateUtilityCasts` is `true`. Supports the `[ext]` placeholder, which
-     * is replaced with `ts` or `js` based on `outputLanguage`.
-     *
-     * @default './gencast-utils.gen.[ext]'
-     */
-    utilityCastsPath?: string;
     /**
      * If `true`, each generated cast function will use a module-level `WeakMap<object, boolean>`
      * to cache the result of the structural check on a per-object basis. On subsequent calls with
@@ -183,3 +151,12 @@ export declare function updateVSCodeSettings(): boolean;
  * @param userConfig Optional configuration to override defaults
  */
 export declare function generateCodegen(userConfig?: GenCastConfig): void;
+/**
+ * Writes the shared utility casts file (e.g. `gencast-utils.gen.ts`).
+ * Contains generic helpers that are not tied to any specific generated type.
+ *
+ * @param outputFilePath Optional path for the output file. Defaults to `./gencast-utils.gen.[ext]`
+ *   next to the cwd. Supports the `[ext]` placeholder.
+ * @param userConfig Optional config overrides (e.g. `outputLanguage`, `failureReturnValue`, `strictNullCheck`).
+ */
+export declare function generateUtilityCastsFile(outputFilePath?: string, userConfig?: GenCastConfig): void;
