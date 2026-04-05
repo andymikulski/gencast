@@ -1366,6 +1366,31 @@ function processInterface(
       return;
     }
 
+    // Handle tuple types (e.g. payPerDay: [number, 'a' | 'b']) before the type-arguments bailout
+    if (type.isTuple()) {
+      const tupleProps = type.getProperties().filter((p) => /^\d+$/.test(p.getName()));
+      const arrayCheck = `Array.isArray(obj.${propName})`;
+      if (tupleProps.length === 0) {
+        propertiesCheckCode.push(arrayCheck);
+      } else {
+        const tupleChecks = tupleProps.map((tProp) => {
+          const tPropType = tProp.getTypeAtLocation(interfaceDeclaration);
+          const tPropRef = `obj.${propName}[${tProp.getName()}]`;
+          if (tPropType.isStringLiteral()) return `${tPropRef} === ${tPropType.getText()}`;
+          if (tPropType.isUnion() && tPropType.getUnionTypes().every((t) => t.isStringLiteral())) {
+            const checks = tPropType.getUnionTypes().map((t) => `${tPropRef} === ${t.getText()}`).join(' || ');
+            return `(${checks})`;
+          }
+          if (tPropType.isString() || tPropType.isNumber() || tPropType.isBoolean()) {
+            return `typeof(${tPropRef}) === "${tPropType.getText()}"`;
+          }
+          return `typeof(${tPropRef}) !== "undefined"`;
+        });
+        propertiesCheckCode.push(`${arrayCheck} && ${tupleChecks.join(' && ')}`);
+      }
+      return;
+    }
+
     if (type.getTypeArguments().length > 0) {
       return;
     }
@@ -1374,8 +1399,38 @@ function processInterface(
     const isStringLiteral = type.isStringLiteral();
     const isStringUnion = type.isUnion() && type.getUnionTypes().every(t => t.isStringLiteral());
 
-    if (type.isAnonymous()) {
-      // Actually a method but is showing up as a property! Again, can't check the return type.
+    // Handle named object types (interfaces and type aliases) before the anonymous/fallback checks.
+    // type.isAnonymous() is also true for type aliases like `type Foo = { ... }`, so we must
+    // check for a named declaration first and delegate to the appropriate cast function.
+    if (type.isObject()) {
+      const symbol = type.getAliasSymbol() ?? type.getSymbol();
+      const decl = (symbol?.getDeclarations() ?? []).find(
+        (d) =>
+          d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+          d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+      );
+      if (decl && symbol) {
+        const declFile = decl.getSourceFile();
+        const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
+        const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
+        if (!wouldCycle) {
+          const typeName = symbol.getName();
+          const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+          if (isCrossFile) {
+            const funcSet = genFunctionImportsRef.get(declFile) ?? new Set<string>();
+            funcSet.add(funcName);
+            genFunctionImportsRef.set(declFile, funcSet);
+          }
+          propertiesCheckCode.push(`${funcName}(obj.${propName}) !== ${config.failureReturnValue}`);
+          return;
+        }
+        // wouldCycle: fall through to the anonymous/function check below
+      }
+    }
+
+    if (type.getCallSignatures().length > 0 || type.isAnonymous()) {
+      // A function-typed property (or an anonymous type we can't inspect further) —
+      // verify it is at least a function.
       propertiesCheckCode.push(`typeof(obj.${propName}) === "function"`);
     } else if (isNullable) {
       propertiesCheckCode.push(

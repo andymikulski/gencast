@@ -211,59 +211,6 @@ Create a `gencast.config.js` file in your project root (optional):
 npm run gencast init
 ```
 
-This will create a configuration file with all available options:
-
-```javascript
-/** @type {import('gencast').GenCastConfig} */
-module.exports = {
-  // Path to your tsconfig.json (default: './tsconfig.json')
-  tsconfigPath: './tsconfig.json',
-
-  // Filename template for generated files (default: '[filename].gen.[ext]')
-  // [filename] = source base name, [ext] = ts or js (based on outputLanguage)
-  genFileName: '[filename].gen.[ext]',
-
-  // Output language: 'ts' (default) or 'js'
-  outputLanguage: 'ts',
-
-  // Prefix for generated functions (default: 'CastTo')
-  funcPrefix: 'CastTo',
-
-  // Reuse cast functions for inherited interfaces instead of inlining checks (default: false)
-  // Warning: may create circular dependencies
-  preferReuseCastFunctions: false,
-
-  // Only generate for interfaces with 'I' prefix (default: false)
-  requireIPrefix: false,
-
-  // Generate functions for empty interfaces (default: true)
-  outputEmptyInterfaces: true,
-
-  // Remove 'I' prefix from interface names in function names (default: true)
-  // For example, IUser generates CastToUser when true, CastToIUser when false
-  removeIPrefix: true,
-
-  // Generate cast functions for classes using instanceof checks (default: false)
-  generateClassCasts: false,
-
-  // Generate cast functions for all exported type aliases (default: false)
-  // Covers object types (type Point = { x: number; y: number }),
-  // primitive aliases (type ID = number), and string literal unions (type Status = 'active' | 'inactive')
-  generateTypeCasts: false,
-
-  // Value returned when a cast fails: 'null' (default) or 'undefined'
-  failureReturnValue: 'null',
-
-  // Use strict null checks: obj !== null && obj !== undefined (default: false)
-  // When false, uses the more concise loose check: obj != null
-  strictNullCheck: false,
-
-  // Cache cast results per-object using a WeakMap for faster repeated calls (default: false)
-  enableWeakMapCaching: false,
-};
-```
-
-
 ## Configuration Reference
 
 ### `tsconfigPath`
@@ -614,55 +561,97 @@ This is most beneficial in hot code paths where the same object is validated rep
 
 ---
 
-## Example
+## Generated Example
 
 **Input (`User.ts`):**
 
 ```typescript
-export interface IUser {
-  id: number;
+interface IMovie {
   name: string;
-  email: string;
-  role?: "admin" | "user";
+  ensemble: IActor[];
+  release: 'theater' | 'straight-to-dvd';
 }
 
-export interface IAdmin extends IUser {
-  permissions: string[];
+type ActorPreferences = {
+    worksWithAnimals: boolean;
+    willDoStunts: boolean;
+    wantsANiceTrailer: boolean;
+  }
+
+interface IActor {
+  name: string;
+  preferences: ActorPreferences;
 }
+
+interface IAnimalActor extends IActor {
+  species: string;
+}
+
+class MovieStore { /* .. */ }
 ```
 
 **Generated (`User.gen.ts`):**
 
-```typescript
-import type { IUser, IAdmin } from './User';
+(Comments have been added here for clarity, but the actual output contains none.)
 
-export function CastToUser(obj: any): IUser | null {
-  return (
-    obj != null &&
-    typeof(obj.id) === "number" &&
-    typeof(obj.name) === "string" &&
-    typeof(obj.email) === "string"
-  ) ? obj : null;
+```typescript
+import type { IMovie, IActor, IAnimalActor, ActorPreferences } from './main';
+
+// Cast function for IMovie.
+export function CastToMovie(obj: any): IMovie | null {
+  // Basic existence check
+  return obj !== null &&
+    obj !== undefined &&
+    // Checking the fields as defined on IMovie.
+    // `name` must be a string
+    typeof obj.name === 'string' &&
+    // `ensemble` must be an array of objects that can be cast to IActor
+    // (note - an empty array will still pass this check!)
+    Array.isArray(obj.ensemble) &&
+    obj.ensemble.every((item: unknown) => CastToActor(item) !== null) &&
+    // `release` is a string literal union, so we ensure it matches one of the allowed values.
+    (obj.release === 'theater' || obj.release === 'straight-to-dvd')
+    // If all checks pass, then we can safely assert the type and return it as such
+    ? obj
+    : null;
 }
 
-export function CastToAdmin(obj: any): IAdmin | null {
-  return (
-    obj != null &&
-    typeof(obj.id) === "number" &&
-    typeof(obj.name) === "string" &&
-    typeof(obj.email) === "string" &&
-    typeof(obj.permissions) === "object"
-  ) ? obj : null;
+export function CastToActor(obj: any): IActor | null {
+  return obj !== null &&
+    obj !== undefined &&
+    typeof obj.name === 'string' &&
+    typeof obj.preferences === 'function'
+    ? obj
+    : null;
+}
+
+export function CastToAnimalActor(obj: any): IAnimalActor | null {
+  return obj !== null &&
+    obj !== undefined &&
+    // `IAnimalActor` extends `IActor`, so we can reuse the checks there, while also validating any
+    // additional fields defined on `IAnimalActor`.
+    CastToActor(obj) !== null &&
+    typeof obj.species === 'string'
+    ? obj
+    : null;
+}
+
+export function CastToActorPreferences(obj: any): ActorPreferences | null {
+  return obj !== null &&
+    obj !== undefined &&
+    typeof obj.worksWithAnimals === 'boolean' &&
+    typeof obj.willDoStunts === 'boolean' &&
+    typeof obj.wantsANiceTrailer === 'boolean'
+    ? obj
+    : null;
 }
 ```
 
 ## Limitations
 
-- Cannot validate method return types (only checks methods exist)
-- Generic type parameters are checked for existence, not specific types
-- Optional properties (`?`) are not validated (their presence is not required)
-- Array/object contents are not deeply validated (only checks `typeof === "object"`)
-- Union types with multiple object shapes (e.g. `{ success: true } | { success: false }`) are validated against the common properties only
+The main caveat is that GenCast *cannot* validate method return types at runtime. Doing so would require executing the method in order to cast its output, which can produce unexpected side effects or general overhead.
+
+Currently, GenCast simply checks for the existence of a function when checking a cast, instead.
 
 ## License
 
