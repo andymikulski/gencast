@@ -4,10 +4,34 @@
 
 GenCast automatically generates type-safe runtime casting functions for your TypeScript interfaces. It crawls your TypeScript project and creates `.gen.ts` files with `CastTo*` functions that validate object shapes at runtime using duck typing.
 
+## Table of Contents
+
+- [Example](#example)
+- [Getting Started](#getting-started)
+- [CLI Commands](#cli-commands)
+- [Configuration](#configuration)
+- [Configuration Reference](#configuration-reference)
+  - [`tsconfigPath`](#tsconfigpath)
+  - [`genFileName`](#genfilename)
+  - [`outputLanguage`](#outputlanguage)
+  - [`funcPrefix`](#funcprefix)
+  - [`removeIPrefix`](#removeiprefix)
+  - [`requireIPrefix`](#requireiprefix)
+  - [`outputEmptyInterfaces`](#outputemptyinterfaces)
+  - [`preferReuseCastFunctions`](#preferreusecastfunctions)
+  - [`failureReturnValue`](#failurereturnvalue)
+  - [`strictNullCheck`](#strictnullcheck)
+  - [`generateClassCasts`](#generateclasscasts)
+  - [`generateTypeCasts`](#generatetypecasts)
+  - [`gencast utils`](#gencast-utils)
+  - [`enableWeakMapCaching`](#enableweakmapcaching)
+- [Generated Example](#generated-example)
+- [Limitations](#limitations)
+- [License](#license)
 
 ## Example
 
-A quick example showing the power of GenCast. This demonstrates a simple weapon/damage system where Goblins and Dragons can be damaged by weapons at runtime.
+This demonstrates a simple weapon/damage system where Goblins and Dragons can be damaged by weapons at runtime.
 
 When called, the weapons use casts to look for relevant interfaces and apply damage/effects accordingly. This produces a very versatile system. As we can see here, a few lines of code can create a complex set of weapons and enemies with different interactions.
 
@@ -91,32 +115,7 @@ class ElvenBow implements IWeapon {
 }
 ```
 
-
-
-## Why GenCast?
-
-TypeScript's type system is erased at runtime, meaning you can't validate if an `unknown` or `any` value matches an interface. GenCast solves this by generating runtime validators that check if an object has the correct shape.
-
-```typescript
-// Your interface
-export interface IUser {
-  id: number;
-  name: string;
-  email: string;
-}
-
-// Generated function (in IUser.gen.ts)
-export function CastToUser(obj: any): IUser | null {
-  return (
-    obj != null &&
-    typeof(obj.id) === "number" &&
-    typeof(obj.name) === "string" &&
-    typeof(obj.email) === "string"
-  ) ? obj : null;
-}
-```
-
-## Installation
+## Getting Started
 
 Install directly from GitHub:
 
@@ -126,81 +125,52 @@ npm install --save-dev github:andymikulski/gencast
 yarn add -D github:andymikulski/gencast
 ```
 
-## Quick Start
+**(Optional) Create the utils file:**
+```bash
+npx gencast utils
+```
 
-1. **Add the script to your `package.json`:**
+**(Optional) Create a configuration file:**
+
+```bash
+npx gencast init
+```
+
+**Run GenCast:**
+
+```bash
+npx gencast
+```
+
+**(Optional) Use `script` field in package.json:**
+
+You can add a script to your `package.json` to make it easier to run GenCast. For example, this runs GenCast and then formats the generated files with Prettier:
 
 ```json
 {
   "scripts": {
-    "gencast": "gencast"
+    "gencast": "gencast && prettier ./**/*.gen.{ts,js} --write"
   }
 }
 ```
-
-2. **(Optional) Create a configuration file:**
-
-```bash
-npm run gencast init
-# or
-yarn gencast init
-```
-
-This creates a `gencast.config.js` file with all available options and their defaults.
-
-3. **Run GenCast:**
-
-```bash
-npm run gencast
-# or
-yarn gencast
-```
-
-4. **Use the generated casting functions:**
-
-```typescript
-import { CastToUser } from './User.gen';
-
-const data: any = await fetchUserFromAPI();
-const user = CastToUser(data);
-
-if (user) {
-  // user is now typed as IUser and validated!
-  console.log(user.name);
-} else {
-  console.error('Invalid user data received');
-}
-```
-
-## How It Works
-
-GenCast scans all TypeScript files in your project (based on your `tsconfig.json`) and:
-
-1. Finds all **exported** interfaces
-2. Generates a `.gen.ts` file next to each source file containing interfaces
-3. Creates `CastTo*` functions that validate object shapes at runtime
-4. Handles inheritance, generics, nullable types, and string unions
 
 ## CLI Commands
 
 ```bash
 # Generate casting functions (default command)
-gencast
+npx gencast
 
 # Create a gencast.config.js configuration file
-gencast init
+npx gencast init
 
 # Write the shared utility helpers file (CastToClass, CastToArray, etc.)
-gencast utils
-
-# Write utility helpers to a custom path
-gencast utils src/utils/cast-helpers.ts
+npx gencast utils
 
 # Update VS Code settings to exclude generated files
-gencast vscode
+npx gencast vscode
 
 # Show help message
-gencast --help
+npx gencast --help
 ```
 
 ## Configuration
@@ -208,10 +178,10 @@ gencast --help
 Create a `gencast.config.js` file in your project root (optional):
 
 ```bash
-npm run gencast init
+npx gencast init
 ```
 
-## Configuration Reference
+## Configuration
 
 ### `tsconfigPath`
 
