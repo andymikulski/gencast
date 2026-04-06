@@ -87,7 +87,7 @@ implements a given interface. Through this, we can produce complex interactions 
 class SuperSword implements IWeapon {
   hitTarget(target: any) {
     // Check if the target can be damaged; if it implements IDamageable, we can apply damage here.
-    // In this example, Dragon and Goblin would both be hit.
+    // In this example, Dragon/Goblin/Chair would be hit.
     const damageable = CastToDamageable(target);
     damageable?.takeDamage(this.attackPower);
 
@@ -209,7 +209,7 @@ export function CastToAnimalActor(obj: any): IAnimalActor | null {
 }
 
 // Notice there is no `CastToMovieStore` function generated.
-// Instead, you would use the `CastToClass` array: CastToClass(MovieStore)
+// Instead, you would use the `CastToClass` util: CastToClass(myObj, MovieStore)
 ```
 
 
