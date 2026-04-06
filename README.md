@@ -32,7 +32,8 @@ GenCast automatically generates type-safe runtime casting functions for your Typ
 
 This demonstrates a simple weapon/damage system where Goblins and Dragons can be damaged by weapons at runtime.
 
-When called, the weapons use casts to look for relevant interfaces and apply damage/effects accordingly. As we can see here, a few lines of code can create a complex set of weapons and enemies with different interactions.
+
+First, we'll define our interfaces:
 
 ```ts
 
@@ -46,7 +47,11 @@ type GuildName = "Red" | "Blue" | "Green";
 interface IGuildMember {
   guild: GuildName;
 }
+```
 
+Now, we'll define our in-game enemies, being sure to implement the necessary interfaces.
+
+```ts
 // Goblins can be damaged, and they also belong to guilds.
 class Goblin implements IDamageable, IGuildMember {
   public guild: GuildName;
@@ -72,22 +77,14 @@ class Chair implements IDamageable {
     }
   }
 }
+```
 
-// -----
+Now, when implementing our weapons, we can use `Cast` functions at runtime to detect if the weapon's target
+implements a given interface. Through this, we can produce complex interactions through a trivial amount of code:
 
-// Generic weapon interface. Note this is used by both the Sword and Bow.
-interface IWeapon {
-  hitTarget(target: any): void;
-  attackPower: number;
-}
-
+```ts
 // The sword damages anything, but does 2X damage to Goblins.
 class SuperSword implements IWeapon {
-  /**
-    * If this weapon hits a target, the weapon then goes on to check if it should trigger corresponding
-    * effects based on the type of the target. For example, if the target is damageable, it takes damage.
-    * If the target is a goblin, it takes double damage.
-    */
   hitTarget(target: any) {
     // Check if the target can be damaged; if it implements IDamageable, we can apply damage here.
     // In this example, Dragon and Goblin would both be hit.
@@ -113,7 +110,10 @@ class ElvenBow implements IWeapon {
 }
 ```
 
+
 ## Generated Code Sample
+
+Here is sample GenCast output to get a sense of how the casting methods work under the hood.
 
 **Input (`Movie.ts`):**
 
