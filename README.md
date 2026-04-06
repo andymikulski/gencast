@@ -316,7 +316,7 @@ export function CastToMarker(obj: any): IMarker | null {
 
 ### `preferReuseCastFunctions`
 
-**Default:** `false`
+**Default:** `true`
 
 Controls how inheritance is handled in generated cast functions.
 
@@ -333,7 +333,7 @@ import { IWeapon } from './Weapon';
 export interface IMissile extends IWeapon { explosionRadius: number; }
 ```
 
-**With `preferReuseCastFunctions: false` (default)** — every property inlined:
+**With `preferReuseCastFunctions: false`** — every property inlined:
 ```typescript
 // Missile.gen.ts
 export function CastToMissile(obj: any): IMissile | null {
@@ -343,7 +343,7 @@ export function CastToMissile(obj: any): IMissile | null {
 }
 ```
 
-**With `preferReuseCastFunctions: true`** — delegates to parent's cast:
+**With `preferReuseCastFunctions: true` (default)** — delegates to parent's cast:
 ```typescript
 // Missile.gen.ts
 import { CastToWeapon } from './Weapon.gen';
@@ -434,7 +434,7 @@ export function CastToUserAccount(obj: any): UserAccount | null {
 
 ### `generateTypeCasts`
 
-**Default:** `false`
+**Default:** `true`
 
 When `true`, generates cast functions for all exported type aliases. Three flavours are handled automatically based on the shape of the type:
 
@@ -452,9 +452,9 @@ export type ID = number;
 export type Status = 'active' | 'inactive' | 'pending';
 ```
 
-**With `generateTypeCasts: false` (default):** no functions generated.
+**With `generateTypeCasts: false`:** no functions generated.
 
-**With `generateTypeCasts: true`:**
+**With `generateTypeCasts: true` (default):**
 ```typescript
 export function CastToPoint(obj: any): Point | null {
   return (obj != null && typeof(obj.x) === "number" && typeof(obj.y) === "number") ? obj : null;
