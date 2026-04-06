@@ -152,10 +152,10 @@ export declare function updateVSCodeSettings(): boolean;
  */
 export declare function generateCodegen(userConfig?: GenCastConfig): void;
 /**
- * Writes the shared utility casts file (e.g. `gencast-utils.gen.ts`).
+ * Writes the shared utility casts file (e.g. `gencast.gen.ts`).
  * Contains generic helpers that are not tied to any specific generated type.
  *
- * @param outputFilePath Optional path for the output file. Defaults to `./gencast-utils.gen.[ext]`
+ * @param outputFilePath Optional path for the output file. Defaults to `./gencast.gen.[ext]`
  *   next to the cwd. Supports the `[ext]` placeholder.
  * @param userConfig Optional config overrides (e.g. `outputLanguage`, `failureReturnValue`, `strictNullCheck`).
  */

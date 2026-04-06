@@ -179,15 +179,15 @@ const DEFAULT_CONFIG: Required<GenCastConfig> = {
   genFileName: '[filename].gen.[ext]',
   outputLanguage: 'ts',
   funcPrefix: 'CastTo',
-  preferReuseCastFunctions: false,
+  preferReuseCastFunctions: true,
   requireIPrefix: false,
   outputEmptyInterfaces: true,
   generateClassCasts: false,
-  generateTypeCasts: false,
+  generateTypeCasts: true,
   removeIPrefix: true,
+  includeTupleArrayMethods: false,
   failureReturnValue: 'null',
   strictNullCheck: false,
-  includeTupleArrayMethods: false,
   enableWeakMapCaching: false,
 };
 
@@ -232,22 +232,16 @@ module.exports = {
   tsconfigPath: './tsconfig.json',
 
   // Generated file name template using [filename] and [ext] placeholders (default: '[filename].gen.[ext]')
-  // [filename] is replaced with the source file's base name (no extension)
-  // [ext] is replaced with 'ts' or 'js' based on outputLanguage
-  // Example: '[filename].gen.[ext]' -> 'MyInterface.gen.ts'
   genFileName: '[filename].gen.[ext]',
 
   // Output language for generated files: 'ts' (default) or 'js'
-  // 'ts' produces fully-typed TypeScript with import type statements and generics
-  // 'js' produces plain JavaScript with no type annotations
   outputLanguage: 'ts',
 
   // Prefix for generated functions (default: 'CastTo')
   funcPrefix: 'CastTo',
 
-  // Reuse cast functions for inherited interfaces (default: false)
-  // Warning: may create circular dependencies
-  preferReuseCastFunctions: false,
+  // Reuse cast functions for inherited interfaces (default: true)
+  preferReuseCastFunctions: true,
 
   // Generate functions for empty interfaces (default: true)
   outputEmptyInterfaces: true,
@@ -255,29 +249,22 @@ module.exports = {
   // Generate cast functions for classes using instanceof (default: false)
   generateClassCasts: false,
 
-  // Generate cast functions for all exported type aliases (default: false)
-  // Covers object types, primitive aliases (type ID = number), and string literal unions (type Status = 'active' | 'inactive')
-  generateTypeCasts: false,
+  // Generate cast functions for all exported type aliases (default: true)
+  generateTypeCasts: true,
 
   // Only generate for interfaces with 'I' prefix (default: false)
   requireIPrefix: false,
 
   // Remove 'I' prefix from interface names in function names (default: true)
   // For example, IUser generates CastToUser when true, CastToIUser when false
-  removeIPrefix: false,
+  removeIPrefix: true,
 
   // Value returned on cast failure (default: 'null')
   // Can be 'null' or 'undefined'
   failureReturnValue: 'null',
 
   // Use strict equality for null checks (default: false)
-  // true: obj !== null && obj !== undefined
-  // false: obj != null
   strictNullCheck: true,
-
-  // Include Array prototype method checks (e.g. reverse, slice, shift) in tuple casts (default: false)
-  // Tuples are rarely operated on as generic arrays, so these checks are omitted by default
-  includeTupleArrayMethods: false,
 
   // Cache cast results in a per-function WeakMap keyed on the input object (default: false)
   // Speeds up repeated casts of the same object; only applies to interface/object-type casts
@@ -407,17 +394,17 @@ export function generateCodegen(userConfig: GenCastConfig = {}): void {
 }
 
 /**
- * Writes the shared utility casts file (e.g. `gencast-utils.gen.ts`).
+ * Writes the shared utility casts file (e.g. `gencast.gen.ts`).
  * Contains generic helpers that are not tied to any specific generated type.
  *
- * @param outputFilePath Optional path for the output file. Defaults to `./gencast-utils.gen.[ext]`
+ * @param outputFilePath Optional path for the output file. Defaults to `./gencast.gen.[ext]`
  *   next to the cwd. Supports the `[ext]` placeholder.
  * @param userConfig Optional config overrides (e.g. `outputLanguage`, `failureReturnValue`, `strictNullCheck`).
  */
 export function generateUtilityCastsFile(outputFilePath?: string, userConfig: GenCastConfig = {}): void {
   const config: Required<GenCastConfig> = { ...DEFAULT_CONFIG, ...userConfig };
   const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
-  const defaultPath = `./gencast-utils.gen.[ext]`;
+  const defaultPath = `./gencast.gen.[ext]`;
   const resolvedTemplate = outputFilePath ?? defaultPath;
   const outputPath = path.resolve(process.cwd(), resolvedTemplate.replace('[ext]', ext));
   const failureValue = config.failureReturnValue;
@@ -485,7 +472,7 @@ export function CastToArray<T>(castFn: (obj: any) => T | ${failureValue}, arr: a
 `;
 
   fs.writeFileSync(outputPath, content, 'utf8');
-  console.log(`\ngencast-utils`);
+  console.log(`\ngencast`);
 }
 
 // ---------------------------------------------------------------------------
@@ -669,12 +656,19 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   let typeAliases: TypeAliasDeclaration[] = [];
   let primitiveTypeAliases: TypeAliasDeclaration[] = [];
   let stringLiteralTypeAliases: TypeAliasDeclaration[] = [];
+  let constructorTypeAliases: TypeAliasDeclaration[] = [];
 
   if (config.generateTypeCasts) {
     sourceFile.getTypeAliases().forEach((x) => {
       if (!x.isExported()) return;
 
       const type = x.getType();
+
+      // Check for construct signature types (e.g. `type Ctor = new (...) => T`)
+      if (type.getConstructSignatures().length > 0) {
+        constructorTypeAliases.push(x);
+        return;
+      }
 
       // Check for string literal unions (e.g., 'active' | 'inactive' | 'pending')
       if (type.isUnion()) {
@@ -713,7 +707,7 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   // If there are no interfaces, classes, or type aliases in this file at all, then we don't need to look at it further
   if (interfaces.length == 0 && classes.length == 0 &&
       typeAliases.length == 0 && primitiveTypeAliases.length == 0 &&
-      stringLiteralTypeAliases.length == 0) {
+      stringLiteralTypeAliases.length == 0 && constructorTypeAliases.length == 0) {
     return;
   }
 
@@ -1009,6 +1003,43 @@ function generateCodegenFile(sourceFile: SourceFile, config: Required<GenCastCon
   `;
       }
     }
+  });
+
+  // for each constructor type alias found in this source file...
+  constructorTypeAliases.forEach((typeAlias) => {
+    const typeName = typeAlias.getName();
+    if (!typeName) {
+      return;
+    }
+
+    hasOutput = true;
+
+    // Add type to imports
+    const file = typeAlias.getSourceFile();
+    const list = typeImports.get(file) ?? new Map<string, boolean>();
+    list.set(typeName, typeAlias.isDefaultExport());
+    typeImports.set(file, list);
+
+    const funcName = `${config.funcPrefix}${typeName}`;
+    const failureValue = config.failureReturnValue;
+    const typeCheck = `typeof(obj) === "function" && 'prototype' in obj`;
+
+    if (isJS) {
+      generatedCode += `
+  export function ${funcName}(obj) {
+    return (${typeCheck}) ? obj : ${failureValue};
+  }
+  `;
+    } else {
+      generatedCode += `
+  export function ${funcName}(obj: any): ${typeName} | ${failureValue} {
+    return (${typeCheck}) ? obj : ${failureValue};
+  }
+  `;
+    }
+
+    // Use magenta color for constructor types
+    console.log(`  \x1b[35m${typeName}\x1b[0m`);
   });
 
   // for each primitive type alias found in this source file...
@@ -1403,6 +1434,14 @@ function processInterface(
     // type.isAnonymous() is also true for type aliases like `type Foo = { ... }`, so we must
     // check for a named declaration first and delegate to the appropriate cast function.
     if (type.isObject()) {
+      // Constructor types (e.g. `type Ctor = new (props: any) => T`) cannot be structurally
+      // validated at runtime — no cast function is generated for them. Check that the value is
+      // a constructable function via `'prototype' in fn` (arrows lack a prototype and cannot
+      // be called with `new`, so this is more precise than a bare typeof check).
+      if (type.getConstructSignatures().length > 0) {
+        propertiesCheckCode.push(`typeof(obj.${propName}) === "function" && 'prototype' in obj.${propName}`);
+        return;
+      }
       const symbol = type.getAliasSymbol() ?? type.getSymbol();
       const decl = (symbol?.getDeclarations() ?? []).find(
         (d) =>
@@ -1616,6 +1655,10 @@ function generateArrayPropertyCheck(
 
   // Named object type (interface or type alias) - call its cast function in .every()
   if (elementType.isObject()) {
+    // Constructor types cannot be structurally validated; fall back to the array-only check.
+    if (elementType.getConstructSignatures().length > 0) {
+      return base;
+    }
     const symbol = elementType.getAliasSymbol() ?? elementType.getSymbol();
     const decl = (symbol?.getDeclarations() ?? []).find(
       (d) =>
@@ -1752,9 +1795,11 @@ function processTypeAlias(
       const isStringLiteral = propType.isStringLiteral();
       const isStringUnion = propType.isUnion() && propType.getUnionTypes().every(t => t.isStringLiteral());
 
-      // Check if it's a method
+      // Check if it's a method or constructor type
       const callSignatures = propType.getCallSignatures();
-      if (callSignatures.length > 0) {
+      if (propType.getConstructSignatures().length > 0) {
+        propertiesCheckCode.push(`typeof(${propRef}) === "function" && 'prototype' in ${propRef}`);
+      } else if (callSignatures.length > 0) {
         propertiesCheckCode.push(`typeof(${propRef}) === "function"`);
       } else if (isNullable) {
         propertiesCheckCode.push(

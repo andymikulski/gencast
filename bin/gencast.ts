@@ -34,7 +34,7 @@ Usage:
   gencast                       Generate casting functions for your interfaces
   gencast init                  Create a gencast.config.js configuration file
   gencast utils [output-file]   Write the shared utility helpers file (CastToClass, CastToArray, etc.)
-                                Defaults to ./gencast-utils.gen.ts (or .js).
+                                Defaults to ./gencast.gen.ts (or .js).
                                 Pass an optional path to change the output location.
   gencast vscode                Update VS Code settings to exclude generated files
   gencast --help                Show this help message

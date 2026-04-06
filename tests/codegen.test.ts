@@ -404,3 +404,71 @@ describe('generateCodegen - skips .gen.ts inputs', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Constructor / construct-signature types
+// ---------------------------------------------------------------------------
+
+describe('generateCodegen - constructor types', () => {
+  it('emits a prototype-in check for an interface property typed as a constructor', () => {
+    const { run, read, cleanup } = scratch(['ConstructorTypes.ts']);
+    try {
+      run();
+      const out = read('ConstructorTypes.gen.ts');
+      // Must use the stricter constructable check, NOT a bare typeof
+      expect(out).toContain(`typeof(obj.ctor) === "function" && 'prototype' in obj.ctor`);
+      expect(out).not.toContain('CastToComponentConstructor');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits a prototype-in check for an inline construct signature property', () => {
+    const { run, read, cleanup } = scratch(['ConstructorTypes.ts']);
+    try {
+      run();
+      const out = read('ConstructorTypes.gen.ts');
+      expect(out).toContain(`typeof(obj.create) === "function" && 'prototype' in obj.create`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('does not generate a cast function for a stand-alone constructor type alias by default', () => {
+    const { run, read, cleanup } = scratch(['ConstructorTypes.ts']);
+    try {
+      run({ generateTypeCasts: false });
+      const out = read('ConstructorTypes.gen.ts');
+      // generateTypeCasts is off, so no standalone cast for the type alias
+      expect(out).not.toContain('CastToComponentConstructor');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('generates a typeof+prototype-in cast function for a constructor type alias when generateTypeCasts is true', () => {
+    const { run, read, cleanup } = scratch(['ConstructorTypes.ts']);
+    try {
+      run({ generateTypeCasts: true });
+      const out = read('ConstructorTypes.gen.ts');
+      expect(out).toContain('export function CastToComponentConstructor');
+      expect(out).toContain(`typeof(obj) === "function" && 'prototype' in obj`);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('still emits a plain typeof check for regular interface methods (not constructors)', () => {
+    const { run, read, cleanup } = scratch(['ConstructorTypes.ts']);
+    try {
+      run();
+      const out = read('ConstructorTypes.gen.ts');
+      // IService.getDisplayName is a call signature, not a construct signature —
+      // it should use the plain typeof check without the prototype guard
+      expect(out).toContain(`typeof(obj.getDisplayName) === "function"`);
+      expect(out).not.toContain(`'prototype' in obj.getDisplayName`);
+    } finally {
+      cleanup();
+    }
+  });
+});
