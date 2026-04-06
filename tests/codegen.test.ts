@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { generateCodegen, generateUtilityCastsFile, GenCastConfig } from '../src/codegen';
+import { generateCodegen, generateCodegenForPath, generateUtilityCastsFile, GenCastConfig } from '../src/codegen';
 
 const FIXTURES_DIR = path.resolve(__dirname, 'fixtures');
 
@@ -515,6 +515,81 @@ describe('generateUtilityCastsFile - CastToArray', () => {
       expect(read()).toContain('CastToArray(myArray, CastToThing)');
     } finally {
       cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateCodegenForPath - single file / directory targeting
+// ---------------------------------------------------------------------------
+
+describe('generateCodegenForPath - single file', () => {
+  it('generates a cast file only for the targeted file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gencast-test-'));
+    try {
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Gun.ts'), path.join(dir, 'Gun.ts'));
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Types.ts'), path.join(dir, 'Types.ts'));
+      const tsconfigPath = path.join(dir, 'tsconfig.json');
+      fs.writeFileSync(
+        tsconfigPath,
+        JSON.stringify({ compilerOptions: { strict: true }, include: ['*.ts'] })
+      );
+
+      generateCodegenForPath(path.join(dir, 'Gun.ts'), { tsconfigPath });
+
+      expect(fs.existsSync(path.join(dir, 'Gun.gen.ts'))).toBe(true);
+      // Types.ts was NOT targeted — its gen file must not be created
+      expect(fs.existsSync(path.join(dir, 'Types.gen.ts'))).toBe(false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('generates correct content for the targeted file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gencast-test-'));
+    try {
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Gun.ts'), path.join(dir, 'Gun.ts'));
+      const tsconfigPath = path.join(dir, 'tsconfig.json');
+      fs.writeFileSync(
+        tsconfigPath,
+        JSON.stringify({ compilerOptions: { strict: true }, include: ['*.ts'] })
+      );
+
+      generateCodegenForPath(path.join(dir, 'Gun.ts'), { tsconfigPath });
+
+      const out = fs.readFileSync(path.join(dir, 'Gun.gen.ts'), 'utf8');
+      expect(out).toContain('export function CastToGun(obj: any): IGun | null');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('generateCodegenForPath - directory', () => {
+  it('generates cast files for all source files in the target directory', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gencast-test-'));
+    const subdir = path.join(root, 'models');
+    fs.mkdirSync(subdir);
+    try {
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Gun.ts'), path.join(subdir, 'Gun.ts'));
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Types.ts'), path.join(subdir, 'Types.ts'));
+      // A file outside the target directory
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'User.ts'), path.join(root, 'User.ts'));
+      const tsconfigPath = path.join(root, 'tsconfig.json');
+      fs.writeFileSync(
+        tsconfigPath,
+        JSON.stringify({ compilerOptions: { strict: true }, include: ['**/*.ts'] })
+      );
+
+      generateCodegenForPath(subdir, { tsconfigPath });
+
+      // Both files inside the directory are processed
+      expect(fs.existsSync(path.join(subdir, 'Gun.gen.ts'))).toBe(true);
+      expect(fs.existsSync(path.join(subdir, 'Types.gen.ts'))).toBe(true);
+      // The file outside the directory is NOT processed
+      expect(fs.existsSync(path.join(root, 'User.gen.ts'))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 });

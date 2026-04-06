@@ -258,6 +258,10 @@ You can add a script to your `package.json` to make it easier to run GenCast. Fo
 # Generate casting functions (default command)
 npx gencast
 
+# Generate casting functions for a specific file or directory
+npx gencast generate src/models/User.ts
+npx gencast generate src/models/
+
 # Create a gencast.config.js configuration file
 npx gencast init
 
@@ -270,6 +274,8 @@ npx gencast vscode
 # Show help message
 npx gencast --help
 ```
+
+The `generate` command is useful during development when you only want to regenerate casts for files you are actively editing. The full project is still loaded from `tsconfig.json` so cross-file type references (e.g. inherited interfaces in other files) resolve correctly — only the output is scoped to the files you specified.
 
 ## Configuration
 

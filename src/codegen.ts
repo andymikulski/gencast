@@ -359,6 +359,65 @@ export function updateVSCodeSettings(): boolean {
 }
 
 /**
+ * Generates cast functions for a single file or all files under a directory.
+ * The project is still loaded from tsconfig so cross-file type references resolve correctly,
+ * but only the files that match `targetPath` are written.
+ *
+ * @param targetPath Absolute or cwd-relative path to a `.ts` file or directory
+ * @param userConfig Optional configuration to override defaults
+ */
+export function generateCodegenForPath(targetPath: string, userConfig: GenCastConfig = {}): void {
+  const config: Required<GenCastConfig> = {
+    ...DEFAULT_CONFIG,
+    ...userConfig,
+  };
+
+  const tsconfigPath = path.resolve(process.cwd(), config.tsconfigPath);
+  const resolvedTarget = path.resolve(process.cwd(), targetPath);
+
+  console.log('GenCast - Generating runtime cast methods...');
+  console.log(`Using tsconfig: ${tsconfigPath}`);
+  console.log(`Target: ${resolvedTarget}\n`);
+
+  const project = new Project();
+  project.addSourceFilesFromTsConfig(tsconfigPath);
+
+  const allSourceFiles = project.getSourceFiles();
+
+  // Determine whether the target is a file or directory
+  let targetFiles: typeof allSourceFiles;
+  const isDirectory = fs.existsSync(resolvedTarget) && fs.statSync(resolvedTarget).isDirectory();
+
+  if (isDirectory) {
+    // Normalise to forward slashes for consistent comparison with ts-morph paths
+    const normalizedDir = resolvedTarget.replace(/\\/g, '/');
+    targetFiles = allSourceFiles.filter((sf) =>
+      sf.getFilePath().startsWith(normalizedDir + '/')
+    );
+  } else {
+    const normalizedTarget = resolvedTarget.replace(/\\/g, '/');
+    targetFiles = allSourceFiles.filter((sf) => sf.getFilePath() === normalizedTarget);
+    if (targetFiles.length === 0) {
+      console.error(`Error: file not found in project: ${resolvedTarget}`);
+      process.exit(1);
+    }
+  }
+
+  if (targetFiles.length === 0) {
+    console.log('No matching source files found.');
+    return;
+  }
+
+  const genImportGraph = config.preferReuseCastFunctions
+    ? computeGenImportGraph(allSourceFiles, config)
+    : new Map<string, Set<string>>();
+
+  targetFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph));
+
+  console.log('\nDone generating casts\n');
+}
+
+/**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
  */

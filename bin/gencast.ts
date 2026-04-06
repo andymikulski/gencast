@@ -7,7 +7,7 @@
  * It scans your TypeScript project and creates .gen.ts files with CastTo* functions.
  */
 
-import { generateCodegen, loadConfig, initConfig, updateVSCodeSettings, generateUtilityCastsFile } from '../src/codegen';
+import { generateCodegen, generateCodegenForPath, loadConfig, initConfig, updateVSCodeSettings, generateUtilityCastsFile } from '../src/codegen';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -16,6 +16,16 @@ const command = args[0];
 if (command === 'init') {
   // Generate a gencast.config.js file
   initConfig();
+} else if (command === 'generate') {
+  // Generate casts for a single file or directory
+  const target = args[1];
+  if (!target) {
+    console.error('Error: "generate" requires a file or directory path.');
+    console.log('Usage: gencast generate <file-or-directory>');
+    process.exit(1);
+  }
+  const config = loadConfig();
+  generateCodegenForPath(target, config);
 } else if (command === 'utils') {
   // Write the shared utility casts file (CastToClass, CastToArray, etc.)
   // An optional second argument overrides the output path.
@@ -31,13 +41,14 @@ if (command === 'init') {
 GenCast - Runtime type casting for TypeScript interfaces
 
 Usage:
-  gencast                       Generate casting functions for your interfaces
-  gencast init                  Create a gencast.config.js configuration file
-  gencast utils [output-file]   Write the shared utility helpers file (CastToClass, CastToArray, etc.)
-                                Defaults to ./gencast.gen.ts (or .js).
-                                Pass an optional path to change the output location.
-  gencast vscode                Update VS Code settings to exclude generated files
-  gencast --help                Show this help message
+  gencast                              Generate casting functions for your interfaces
+  gencast generate <file|directory>    Generate casts for a specific file or directory
+  gencast init                         Create a gencast.config.js configuration file
+  gencast utils [output-file]          Write the shared utility helpers file (CastToClass, CastToArray, etc.)
+                                       Defaults to ./gencast.gen.ts (or .js).
+                                       Pass an optional path to change the output location.
+  gencast vscode                       Update VS Code settings to exclude generated files
+  gencast --help                       Show this help message
 `);
 } else if (command) {
   console.error(`Unknown command: ${command}`);
