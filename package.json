@@ -36,11 +36,13 @@
   },
   "devDependencies": {
     "@types/node": "^16.18.126",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.2"
   },
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "test": "node dist/bin/gencast.js"
+    "test": "vitest run",
+    "test:watch": "vitest"
   }
 }
