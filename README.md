@@ -6,7 +6,8 @@ GenCast automatically generates type-safe runtime casting functions for your Typ
 
 ## Table of Contents
 
-- [Example](#example)
+- [Usage Example](#usage-example)
+- [Generated Code Sample](#generated-code-sample)
 - [Getting Started](#getting-started)
 - [CLI Commands](#cli-commands)
 - [Configuration](#configuration)
@@ -24,16 +25,14 @@ GenCast automatically generates type-safe runtime casting functions for your Typ
   - [`generateClassCasts`](#generateclasscasts)
   - [`generateTypeCasts`](#generatetypecasts)
   - [`enableWeakMapCaching`](#enableweakmapcaching)
-- [Generated Example](#generated-example)
 - [Limitations](#limitations)
 - [License](#license)
 
-## Example
+## Usage Example
 
 This demonstrates a simple weapon/damage system where Goblins and Dragons can be damaged by weapons at runtime.
 
-When called, the weapons use casts to look for relevant interfaces and apply damage/effects accordingly. This produces a very versatile system. As we can see here, a few lines of code can create a complex set of weapons and enemies with different interactions.
-
+When called, the weapons use casts to look for relevant interfaces and apply damage/effects accordingly. As we can see here, a few lines of code can create a complex set of weapons and enemies with different interactions.
 
 ```ts
 
@@ -113,6 +112,106 @@ class ElvenBow implements IWeapon {
   }
 }
 ```
+
+## Generated Code Sample
+
+**Input (`Movie.ts`):**
+
+```typescript
+interface IMovie {
+  name: string;
+  ensemble: IActor[];
+  release: 'theater' | 'straight-to-dvd';
+}
+
+type ActorPreferences = {
+    imdbRating: number;
+    willDoStunts: boolean;
+    wantsANiceTrailer: boolean;
+    isSuperFamous?: boolean;
+  }
+
+interface IActor {
+  name: string;
+  preferences: ActorPreferences;
+}
+
+interface IAnimalActor extends IActor {
+  species: string;
+}
+
+class MovieStore { /* .. */ }
+```
+
+**Generated (`Movie.gen.ts`):**
+
+(Comments have been added here for clarity, but the actual output contains none.)
+
+```typescript
+import type { IMovie, IActor, IAnimalActor, ActorPreferences } from './main';
+
+// Cast for the `ActorPreferences` type.
+// Each field's presence and type is checked
+export function CastToActorPreferences(obj: any): ActorPreferences | null {
+  return obj !== null &&
+    obj !== undefined &&
+    typeof obj.imdbRating === 'number' &&
+    typeof obj.willDoStunts === 'boolean' &&
+    typeof obj.wantsANiceTrailer === 'boolean'
+    // Notice the absence of `isSuperFamous` - since it's optional, we don't check for it at all.
+    ? obj
+    : null;
+}
+
+// Cast function for IMovie.
+export function CastToMovie(obj: any): IMovie | null {
+  return obj !== null &&
+    obj !== undefined &&
+    typeof obj.name === 'string' &&
+    // `ensemble` must be an array of objects that can be cast to IActor
+    // (note - an empty array will still pass this check!)
+    Array.isArray(obj.ensemble) &&
+    obj.ensemble.every((item: unknown) => CastToActor(item) !== null) &&
+    // `release` is a string literal union, so we ensure it matches one of the allowed values.
+    (obj.release === 'theater' || obj.release === 'straight-to-dvd')
+    ? obj
+    : null;
+}
+
+// IActor
+export function CastToActor(obj: any): IActor | null {
+  return obj !== null &&
+    obj !== undefined &&
+    typeof obj.name === 'string' &&
+    // `payPerDay` is a tuple, so we ensure it's the right type, and then ensure that each of its members
+    // matches the described type.
+    Array.isArray(obj.payPerDay) &&
+    // The first element is a primitive type
+    typeof obj.payPerDay[0] === 'number' &&
+    // The second element is a string literal union
+    (obj.payPerDay[1] === 'dollarbucks' ||
+      obj.payPerDay[1] === 'dollarydoos') &&
+    // Finally, ensure the `preferences` field can be cast to the ActorPreferences type
+    CastToActorPreferences(obj.preferences) !== null
+    ? obj
+    : null;
+}
+
+export function CastToAnimalActor(obj: any): IAnimalActor | null {
+  return obj !== null &&
+    obj !== undefined &&
+    // `IAnimalActor` extends `IActor`, so we can reuse that check here.
+    CastToActor(obj) !== null &&
+    // We will still check the IAnimalActor-specific fields.
+    typeof obj.species === 'string'
+    ? obj
+    : null;
+}
+
+// Notice there is no `CastToMovieStore` function generated.
+// Instead, you would use the `CastToClass` array: CastToClass(MovieStore)
+```
+
 
 ## Getting Started
 
@@ -461,105 +560,6 @@ The `WeakMap` is lazily created on first use, so there is zero overhead for code
 This is most beneficial in hot code paths where the same object is validated repeatedly (e.g. inside a rendering loop or a high-frequency event handler).
 
 ---
-
-## Generated Example
-
-**Input (`Movie.ts`):**
-
-```typescript
-interface IMovie {
-  name: string;
-  ensemble: IActor[];
-  release: 'theater' | 'straight-to-dvd';
-}
-
-type ActorPreferences = {
-    imdbRating: number;
-    willDoStunts: boolean;
-    wantsANiceTrailer: boolean;
-    isSuperFamous?: boolean;
-  }
-
-interface IActor {
-  name: string;
-  preferences: ActorPreferences;
-}
-
-interface IAnimalActor extends IActor {
-  species: string;
-}
-
-class MovieStore { /* .. */ }
-```
-
-**Generated (`Movie.gen.ts`):**
-
-(Comments have been added here for clarity, but the actual output contains none.)
-
-```typescript
-import type { IMovie, IActor, IAnimalActor, ActorPreferences } from './main';
-
-// Cast for the `ActorPreferences` type.
-// Each field's presence and type is checked
-export function CastToActorPreferences(obj: any): ActorPreferences | null {
-  return obj !== null &&
-    obj !== undefined &&
-    typeof obj.imdbRating === 'number' &&
-    typeof obj.willDoStunts === 'boolean' &&
-    typeof obj.wantsANiceTrailer === 'boolean'
-    // Notice the absence of `isSuperFamous` - since it's optional, we don't check for it at all.
-    ? obj
-    : null;
-}
-
-// Cast function for IMovie.
-export function CastToMovie(obj: any): IMovie | null {
-  return obj !== null &&
-    obj !== undefined &&
-    typeof obj.name === 'string' &&
-    // `ensemble` must be an array of objects that can be cast to IActor
-    // (note - an empty array will still pass this check!)
-    Array.isArray(obj.ensemble) &&
-    obj.ensemble.every((item: unknown) => CastToActor(item) !== null) &&
-    // `release` is a string literal union, so we ensure it matches one of the allowed values.
-    (obj.release === 'theater' || obj.release === 'straight-to-dvd')
-    ? obj
-    : null;
-}
-
-// IActor
-export function CastToActor(obj: any): IActor | null {
-  return obj !== null &&
-    obj !== undefined &&
-    typeof obj.name === 'string' &&
-    // `payPerDay` is a tuple, so we ensure it's the right type, and then ensure that each of its members
-    // matches the described type.
-    Array.isArray(obj.payPerDay) &&
-    // The first element is a primitive type
-    typeof obj.payPerDay[0] === 'number' &&
-    // The second element is a string literal union
-    (obj.payPerDay[1] === 'dollarbucks' ||
-      obj.payPerDay[1] === 'dollarydoos') &&
-    // Finally, ensure the `preferences` field can be cast to the ActorPreferences type
-    CastToActorPreferences(obj.preferences) !== null
-    ? obj
-    : null;
-}
-
-export function CastToAnimalActor(obj: any): IAnimalActor | null {
-  return obj !== null &&
-    obj !== undefined &&
-    // `IAnimalActor` extends `IActor`, so we can reuse that check here.
-    CastToActor(obj) !== null &&
-    // We will still check the IAnimalActor-specific fields.
-    typeof obj.species === 'string'
-    ? obj
-    : null;
-}
-
-// Notice there is no `CastToMovieStore` function generated.
-// Instead, you would use the `CastToClass` array: CastToClass(MovieStore)
-```
 
 ## Limitations
 
