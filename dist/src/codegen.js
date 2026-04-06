@@ -267,9 +267,9 @@ export function CastToClass(obj, ctor) {
  * Casts every element of \`arr\` using \`castFn\`.
  * Returns the typed array if every element casts successfully, otherwise returns ${failureValue}.
  *
- * Usage: \`CastToArray(CastToThing, myArray)\`
+ * Usage: \`CastToArray(myArray, CastToThing)\`
  */
-export function CastToArray(castFn, arr) {
+export function CastToArray(arr, castFn) {
   if (!Array.isArray(arr)) return ${failureValue};
   const result = [];
   for (const item of arr) {
@@ -297,9 +297,9 @@ export function CastToClass<T>(obj: any, ctor: new (...args: any[]) => T): T | $
  * Casts every element of \`arr\` using \`castFn\`.
  * Returns the typed array if every element casts successfully, otherwise returns ${failureValue}.
  *
- * Usage: \`CastToArray(CastToThing, myArray)\`
+ * Usage: \`CastToArray(myArray, CastToThing)\`
  */
-export function CastToArray<T>(castFn: (obj: any) => T | ${failureValue}, arr: any): T[] | ${failureValue} {
+export function CastToArray<T>(arr: any, castFn: (obj: any) => T | ${failureValue}): T[] | ${failureValue} {
   if (!Array.isArray(arr)) { return ${failureValue}; }
 
   return arr.every((item) => castFn(item) !== ${failureValue}) ? arr as T[] : ${failureValue};

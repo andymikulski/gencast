@@ -219,22 +219,6 @@ Controls whether generated files are TypeScript or plain JavaScript.
 - `'ts'` — Full TypeScript with `import type` statements, generics, and return-type annotations.
 - `'js'` — Plain JavaScript with no type annotations. Only value imports needed for `instanceof` checks are kept.
 
-**With `outputLanguage: 'ts'` (default):**
-```typescript
-import type { IUser } from './User';
-
-export function CastToUser(obj: any): IUser | null {
-  return (obj != null && typeof(obj.id) === "number" && typeof(obj.name) === "string") ? obj : null;
-}
-```
-
-**With `outputLanguage: 'js'`:**
-```javascript
-export function CastToUser(obj) {
-  return (obj != null && typeof(obj.id) === "number" && typeof(obj.name) === "string") ? obj : null;
-}
-```
-
 ---
 
 ### `funcPrefix`
@@ -246,11 +230,9 @@ Prefix prepended to each interface or type name when forming the function name.
 **With `funcPrefix: 'CastTo'` (default):**
 ```typescript
 export function CastToUser(obj: any): IUser | null { ... }
-```
-
-**With `funcPrefix: 'validate'`:**
-```typescript
 export function validateUser(obj: any): IUser | null { ... }
+export function tryCastUser(obj: any): IUser | null { ... }
+// etc
 ```
 
 ---
@@ -299,18 +281,6 @@ export interface Config { debug: boolean; } // no I-prefix
 Controls whether cast functions are generated for interfaces that have no properties.
 
 Technically, `{}` in TypeScript is effectively a supertype of all non-nullish values, so an empty interface can be "cast" from any object. GenCast can still generate a function for this case, but it may not be useful and could even be misleading — if you have an empty interface, you probably don't need a cast function for it.
-
-**Input:**
-```typescript
-export interface IMarker {}
-```
-
-**With `outputEmptyInterfaces: true` (default):**
-```typescript
-export function CastToMarker(obj: any): IMarker | null {
-  return (obj != null) ? obj : null;
-}
-```
 
 ---
 
@@ -363,19 +333,6 @@ export function CastToMissile(obj: any): IMissile | null {
 
 The value returned when a cast fails. Choose `'null'` or `'undefined'` depending on your project's conventions.
 
-**With `failureReturnValue: 'null'` (default):**
-```typescript
-export function CastToUser(obj: any): IUser | null {
-  return (obj != null && typeof(obj.id) === "number") ? obj : null;
-}
-```
-
-**With `failureReturnValue: 'undefined'`:**
-```typescript
-export function CastToUser(obj: any): IUser | undefined {
-  return (obj != null && typeof(obj.id) === "number") ? obj : undefined;
-}
-```
 
 ---
 
@@ -391,14 +348,14 @@ Controls the style of the null guard at the start of each cast.
 **With `strictNullCheck: false` (default):**
 ```typescript
 export function CastToUser(obj: any): IUser | null {
-  return (obj != null && typeof(obj.id) === "number" && typeof(obj.name) === "string") ? obj : null;
+  return (obj != null && ... ) ? obj : null;
 }
 ```
 
 **With `strictNullCheck: true`:**
 ```typescript
 export function CastToUser(obj: any): IUser | null {
-  return (obj !== null && obj !== undefined && typeof(obj.id) === "number" && typeof(obj.name) === "string") ? obj : null;
+  return (obj !== null && obj !== undefined && ... ) ? obj : null;
 }
 ```
 
@@ -410,7 +367,8 @@ export function CastToUser(obj: any): IUser | null {
 
 When `true`, generates a cast function for each exported class using an `instanceof` check rather than duck typing.
 
-> If you want one generic helper instead of per-class functions, see `generateUtilityCasts`.
+> An alternative approach is to use the `CastToClass` method available after running `gencast utils`.
+> This is a generic function which eliminates the need to create a separate cast function for each class.
 
 **Input:**
 ```typescript
@@ -419,9 +377,7 @@ export class UserAccount {
 }
 ```
 
-**With `generateClassCasts: false` (default):** no function generated for `UserAccount`.
-
-**With `generateClassCasts: true`:**
+**Output:**
 ```typescript
 import { UserAccount } from './User';
 
@@ -452,25 +408,12 @@ export type ID = number;
 export type Status = 'active' | 'inactive' | 'pending';
 ```
 
-**With `generateTypeCasts: false`:** no functions generated.
-
-**With `generateTypeCasts: true` (default):**
+**Output:**
 ```typescript
-export function CastToPoint(obj: any): Point | null {
-  return (obj != null && typeof(obj.x) === "number" && typeof(obj.y) === "number") ? obj : null;
-}
-
-export function CastToPoint3D(obj: any): Point3D | null {
-  return (obj != null && typeof(obj.x) === "number" && typeof(obj.y) === "number" && typeof(obj.z) === "number") ? obj : null;
-}
-
-export function CastToID(obj: any): ID | null {
-  return (typeof(obj) === "number") ? obj : null;
-}
-
-export function CastToStatus(obj: any): Status | null {
-  return (obj === "active" || obj === "inactive" || obj === "pending") ? obj : null;
-}
+export function CastToPoint(obj: any): Point | null { ... }
+export function CastToPoint3D(obj: any): Point3D | null { ... }
+export function CastToID(obj: any): ID | null { ... }
+export function CastToStatus(obj: any): Status | null { ... }
 ```
 
 ---
@@ -492,16 +435,17 @@ The output language (`ts`/`js`) and null-check style are derived from your `genc
 Currently generated helpers:
 
 - **`CastToClass<T>(obj, ctor)`** — generic `instanceof` check. An alternative to per-class cast functions generated by `generateClassCasts`.
-- **`CastToArray(castFn, arr)`** — validates every element of an array with a cast function. Returns the typed array if all elements pass, or `null`/`undefined` if any fails.
+- **`CastToArray(arr, castFn)`** — validates every element of an array with a cast function. Returns the typed array if all elements pass, or `null`/`undefined` if any fails.
 
 
 **Usage:**
 ```typescript
 import { CastToClass, CastToArray } from './gencast.gen';
 import { CastToUser } from './User.gen';
+import { UserAccount } from './User';
 
-const account = CastToClass(someObj, UserAccount); // UserAccount | null
-const users = CastToArray(CastToUser, rawArray);   // IUser[] | null
+const account = CastToClass(myObj, UserAccount); // UserAccount | null
+const users = CastToArray(myArray, CastToUser);   // IUser[] | null
 ```
 
 ---

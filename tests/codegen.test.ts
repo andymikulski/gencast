@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 
-import { generateCodegen, GenCastConfig } from '../src/codegen';
+import { generateCodegen, generateUtilityCastsFile, GenCastConfig } from '../src/codegen';
 
 const FIXTURES_DIR = path.resolve(__dirname, 'fixtures');
 
@@ -467,6 +467,52 @@ describe('generateCodegen - constructor types', () => {
       // it should use the plain typeof check without the prototype guard
       expect(out).toContain(`typeof(obj.getDisplayName) === "function"`);
       expect(out).not.toContain(`'prototype' in obj.getDisplayName`);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generateUtilityCastsFile - CastToArray parameter order
+// ---------------------------------------------------------------------------
+
+describe('generateUtilityCastsFile - CastToArray', () => {
+  function scratchUtils(config: GenCastConfig = {}) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gencast-utils-test-'));
+    const outputPath = path.join(dir, 'gencast.gen.ts');
+    const cleanup = () => fs.rmSync(dir, { recursive: true, force: true });
+    const read = () => fs.readFileSync(outputPath, 'utf8');
+    const run = (overrides: GenCastConfig = {}) =>
+      generateUtilityCastsFile(outputPath, { ...config, ...overrides });
+    return { run, read, cleanup };
+  }
+
+  it('emits CastToArray with arr as the first parameter', () => {
+    const { run, read, cleanup } = scratchUtils();
+    try {
+      run();
+      expect(read()).toContain('CastToArray<T>(arr: any, castFn:');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits CastToArray with arr as the first parameter in JS output', () => {
+    const { run, read, cleanup } = scratchUtils({ outputLanguage: 'js' });
+    try {
+      run();
+      expect(read()).toContain('CastToArray(arr, castFn)');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('documents the correct parameter order in the usage comment', () => {
+    const { run, read, cleanup } = scratchUtils();
+    try {
+      run();
+      expect(read()).toContain('CastToArray(myArray, CastToThing)');
     } finally {
       cleanup();
     }
