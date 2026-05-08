@@ -732,3 +732,124 @@ describe('generateCodegen - node_modules type references', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// exclude
+// ---------------------------------------------------------------------------
+
+describe('generateCodegen - exclude', () => {
+  it('skips files whose path contains a string entry', () => {
+    const { run, exists, cleanup } = scratch(['Gun.ts', 'Types.ts']);
+    try {
+      run({ exclude: ['Gun.ts'] });
+      expect(exists('Gun.gen.ts')).toBe(false);
+      expect(exists('Types.gen.ts')).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips files whose path matches a RegExp entry', () => {
+    const { run, exists, cleanup } = scratch(['Gun.ts', 'Types.ts']);
+    try {
+      run({ exclude: [/Types\.ts$/] });
+      expect(exists('Gun.gen.ts')).toBe(true);
+      expect(exists('Types.gen.ts')).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('accepts a single string (not wrapped in an array)', () => {
+    const { run, exists, cleanup } = scratch(['Gun.ts', 'Types.ts']);
+    try {
+      run({ exclude: 'Gun.ts' });
+      expect(exists('Gun.gen.ts')).toBe(false);
+      expect(exists('Types.gen.ts')).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('accepts a single RegExp (not wrapped in an array)', () => {
+    const { run, exists, cleanup } = scratch(['Gun.ts', 'Types.ts']);
+    try {
+      run({ exclude: /Gun/ });
+      expect(exists('Gun.gen.ts')).toBe(false);
+      expect(exists('Types.gen.ts')).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('mixes string and RegExp entries', () => {
+    const { run, exists, cleanup } = scratch(['Gun.ts', 'Types.ts', 'User.ts']);
+    try {
+      run({ exclude: ['Gun.ts', /User\.ts$/] });
+      expect(exists('Gun.gen.ts')).toBe(false);
+      expect(exists('User.gen.ts')).toBe(false);
+      expect(exists('Types.gen.ts')).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('matches subdirectory paths using forward slashes (works on Windows too)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gencast-test-'));
+    const engineDir = path.join(root, 'src', 'engine');
+    const gameDir = path.join(root, 'src', 'game');
+    fs.mkdirSync(engineDir, { recursive: true });
+    fs.mkdirSync(gameDir, { recursive: true });
+    try {
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Gun.ts'), path.join(engineDir, 'Gun.ts'));
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Types.ts'), path.join(gameDir, 'Types.ts'));
+      const tsconfigPath = path.join(root, 'tsconfig.json');
+      fs.writeFileSync(
+        tsconfigPath,
+        JSON.stringify({ compilerOptions: { strict: true }, include: ['**/*.ts'] })
+      );
+
+      generateCodegen({ tsconfigPath, exclude: ['src/engine'] });
+
+      expect(fs.existsSync(path.join(engineDir, 'Gun.gen.ts'))).toBe(false);
+      expect(fs.existsSync(path.join(gameDir, 'Types.gen.ts'))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('an empty exclude list processes every file', () => {
+    const { run, exists, cleanup } = scratch(['Gun.ts', 'Types.ts']);
+    try {
+      run({ exclude: [] });
+      expect(exists('Gun.gen.ts')).toBe(true);
+      expect(exists('Types.gen.ts')).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('generateCodegenForPath - exclude', () => {
+  it('skips excluded files even when they fall inside a targeted directory', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gencast-test-'));
+    const subdir = path.join(root, 'models');
+    fs.mkdirSync(subdir);
+    try {
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Gun.ts'), path.join(subdir, 'Gun.ts'));
+      fs.copyFileSync(path.join(FIXTURES_DIR, 'Types.ts'), path.join(subdir, 'Types.ts'));
+      const tsconfigPath = path.join(root, 'tsconfig.json');
+      fs.writeFileSync(
+        tsconfigPath,
+        JSON.stringify({ compilerOptions: { strict: true }, include: ['**/*.ts'] })
+      );
+
+      generateCodegenForPath(subdir, { tsconfigPath, exclude: [/Gun\.ts$/] });
+
+      expect(fs.existsSync(path.join(subdir, 'Gun.gen.ts'))).toBe(false);
+      expect(fs.existsSync(path.join(subdir, 'Types.gen.ts'))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

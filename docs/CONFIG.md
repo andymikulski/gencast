@@ -34,6 +34,7 @@ module.exports = {
 | [`utilsFilePath`](#utilsfilepath) | `'./gencast.gen.[ext]'` | Path to the shared utility helpers file. |
 | [`generateNodeModulesCasts`](#generatenodemodulescasts) | `false` | Emit casts for types declared in `node_modules`. |
 | [`nodeModulesCastsFilePath`](#nodemodulescastsfilepath) | `'./gencast.nodemodules.gen.[ext]'` | Path to the shared `node_modules` casts file. |
+| [`exclude`](#exclude) | `[]` | Source-file paths to skip — strings (substring match) and/or `RegExp`. |
 
 ---
 
@@ -181,3 +182,25 @@ When `false` (default), references to `node_modules`-declared types fall back to
 ### `nodeModulesCastsFilePath`
 
 Where the shared `node_modules` casts file lives. Used when `generateNodeModulesCasts` is enabled. Supports `[ext]`.
+
+### `exclude`
+
+Source-file paths matching any entry are skipped — no `.gen.ts` is written for them. The full project is still loaded from `tsconfig.json`, so types declared in excluded files remain resolvable for files that reference them.
+
+- **String entries** match as a case-sensitive substring against the file path. Paths are normalised to forward slashes before testing, so `'src/engine'` works on Windows too.
+- **RegExp entries** are tested with `.test(filePath)` against the normalised path.
+
+Accepts a single value or an array. The default is `[]` (nothing excluded).
+
+```js
+// Skip everything in src/engine
+exclude: ['src/engine']
+
+// Skip a folder and all test files
+exclude: ['src/engine', /\.test\.ts$/]
+
+// Single regex (no array needed)
+exclude: /\.spec\.ts$/
+```
+
+**Caveat:** when [`preferReuseCastFunctions`](#preferreusecastfunctions) is `true` and a non-excluded file extends a type declared in an excluded file, the generated import will point at a `.gen.ts` that does not exist. Either restructure the inheritance or set `preferReuseCastFunctions: false` for those cases.

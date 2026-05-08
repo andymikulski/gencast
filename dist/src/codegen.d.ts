@@ -173,6 +173,24 @@ export interface GenCastConfig {
      * @default './gencast.nodemodules.gen.[ext]'
      */
     nodeModulesCastsFilePath?: string;
+    /**
+     * Source-file paths matching any of these patterns are skipped — no `.gen.ts` is
+     * written for them. The full project is still loaded from `tsconfig.json`, so
+     * types declared in excluded files remain resolvable for files that reference them.
+     *
+     * - String entries match as a case-sensitive substring against the file path
+     *   (paths are normalised to forward slashes before testing, so `'src/engine'`
+     *   works on Windows too).
+     * - `RegExp` entries are tested with `.test(filePath)`.
+     *
+     * Caveat: when `preferReuseCastFunctions` is `true` and a non-excluded file
+     * extends a type declared in an excluded file, the generated import will
+     * point at a `.gen.ts` that does not exist. Either restructure the
+     * inheritance or set `preferReuseCastFunctions: false` for those cases.
+     *
+     * @default []
+     */
+    exclude?: (string | RegExp) | (string | RegExp)[];
 }
 /**
  * Attempts to load gencast.config.cjs or gencast.config.js from the current

@@ -204,6 +204,25 @@ export interface GenCastConfig {
    * @default './gencast.nodemodules.gen.[ext]'
    */
   nodeModulesCastsFilePath?: string;
+
+  /**
+   * Source-file paths matching any of these patterns are skipped — no `.gen.ts` is
+   * written for them. The full project is still loaded from `tsconfig.json`, so
+   * types declared in excluded files remain resolvable for files that reference them.
+   *
+   * - String entries match as a case-sensitive substring against the file path
+   *   (paths are normalised to forward slashes before testing, so `'src/engine'`
+   *   works on Windows too).
+   * - `RegExp` entries are tested with `.test(filePath)`.
+   *
+   * Caveat: when `preferReuseCastFunctions` is `true` and a non-excluded file
+   * extends a type declared in an excluded file, the generated import will
+   * point at a `.gen.ts` that does not exist. Either restructure the
+   * inheritance or set `preferReuseCastFunctions: false` for those cases.
+   *
+   * @default []
+   */
+  exclude?: (string | RegExp) | (string | RegExp)[];
 }
 
 // Simple object containing a bunch of util functions.
@@ -272,7 +291,27 @@ const DEFAULT_CONFIG: Required<GenCastConfig> = {
   utilsFilePath: './gencast.gen.[ext]',
   generateNodeModulesCasts: false,
   nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
+  exclude: [],
 };
+
+/**
+ * Builds a predicate that returns `true` when a source-file path matches any of
+ * the user-supplied `exclude` patterns. Paths are normalised to forward slashes
+ * before testing so string substrings like `'src/engine'` work on Windows.
+ */
+function compileExcludeMatcher(
+  exclude: GenCastConfig['exclude']
+): (filePath: string) => boolean {
+  if (!exclude) return () => false;
+  const list = Array.isArray(exclude) ? exclude : [exclude];
+  if (list.length === 0) return () => false;
+  return (filePath: string) => {
+    const norm = filePath.replace(/\\/g, '/');
+    return list.some((pat) =>
+      typeof pat === 'string' ? norm.includes(pat) : pat.test(norm)
+    );
+  };
+}
 
 /**
  * Returns true when the nearest package.json declares `"type": "module"`,
@@ -415,6 +454,12 @@ module.exports = {
 
   // Path to the shared node_modules casts file, used when generateNodeModulesCasts is true (default: './gencast.nodemodules.gen.[ext]')
   nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
+
+  // Skip source-file paths matching any of these patterns; no .gen.ts is written for them.
+  // String entries match as a substring; RegExp entries are tested with .test().
+  // Paths are normalised to forward slashes, so 'src/engine' works on Windows too.
+  // exclude: ['src/engine', /\\.test\\.ts$/],
+  exclude: [],
 };
 `;
 
@@ -558,6 +603,9 @@ export function generateCodegenForPath(targetPath: string, userConfig: GenCastCo
     }
   }
 
+  const isExcluded = compileExcludeMatcher(config.exclude);
+  targetFiles = targetFiles.filter((sf) => !isExcluded(sf.getFilePath()));
+
   if (targetFiles.length === 0) {
     console.log('No matching source files found.');
     return;
@@ -623,7 +671,10 @@ export function generateCodegen(userConfig: GenCastConfig = {}): void {
     : undefined;
 
   // Process each file and output the relevant file
-  allSourceFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph, nodeModulesCasts));
+  const isExcluded = compileExcludeMatcher(config.exclude);
+  allSourceFiles
+    .filter((file) => !isExcluded(file.getFilePath()))
+    .forEach((file) => generateCodegenFile(file, config, genImportGraph, nodeModulesCasts));
 
   if (nodeModulesCasts && nodeModulesCasts.size > 0) {
     writeNodeModulesCastsFile(config, nodeModulesCasts);

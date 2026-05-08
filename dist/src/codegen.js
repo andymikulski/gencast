@@ -72,7 +72,24 @@ const DEFAULT_CONFIG = {
     utilsFilePath: './gencast.gen.[ext]',
     generateNodeModulesCasts: false,
     nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
+    exclude: [],
 };
+/**
+ * Builds a predicate that returns `true` when a source-file path matches any of
+ * the user-supplied `exclude` patterns. Paths are normalised to forward slashes
+ * before testing so string substrings like `'src/engine'` work on Windows.
+ */
+function compileExcludeMatcher(exclude) {
+    if (!exclude)
+        return () => false;
+    const list = Array.isArray(exclude) ? exclude : [exclude];
+    if (list.length === 0)
+        return () => false;
+    return (filePath) => {
+        const norm = filePath.replace(/\\/g, '/');
+        return list.some((pat) => typeof pat === 'string' ? norm.includes(pat) : pat.test(norm));
+    };
+}
 /**
  * Returns true when the nearest package.json declares `"type": "module"`,
  * meaning a plain `.js` file in the project is treated as ESM and cannot be
@@ -204,6 +221,12 @@ module.exports = {
 
   // Path to the shared node_modules casts file, used when generateNodeModulesCasts is true (default: './gencast.nodemodules.gen.[ext]')
   nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
+
+  // Skip source-file paths matching any of these patterns; no .gen.ts is written for them.
+  // String entries match as a substring; RegExp entries are tested with .test().
+  // Paths are normalised to forward slashes, so 'src/engine' works on Windows too.
+  // exclude: ['src/engine', /\\.test\\.ts$/],
+  exclude: [],
 };
 `;
     try {
@@ -332,6 +355,8 @@ function generateCodegenForPath(targetPath, userConfig = {}) {
             process.exit(1);
         }
     }
+    const isExcluded = compileExcludeMatcher(config.exclude);
+    targetFiles = targetFiles.filter((sf) => !isExcluded(sf.getFilePath()));
     if (targetFiles.length === 0) {
         console.log('No matching source files found.');
         return;
@@ -383,7 +408,10 @@ function generateCodegen(userConfig = {}) {
         ? new Map()
         : undefined;
     // Process each file and output the relevant file
-    allSourceFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph, nodeModulesCasts));
+    const isExcluded = compileExcludeMatcher(config.exclude);
+    allSourceFiles
+        .filter((file) => !isExcluded(file.getFilePath()))
+        .forEach((file) => generateCodegenFile(file, config, genImportGraph, nodeModulesCasts));
     if (nodeModulesCasts && nodeModulesCasts.size > 0) {
         writeNodeModulesCastsFile(config, nodeModulesCasts);
     }
