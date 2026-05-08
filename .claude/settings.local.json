@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /tmp/gencast-record)",
+      "Read(//tmp/**)",
+      "Bash(cat)",
+      "Bash(npx vitest *)",
+      "Bash(npx tsc *)"
+    ]
+  }
+}

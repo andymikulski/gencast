@@ -417,7 +417,8 @@ describe('generateCodegen - constructor types', () => {
       const out = read('ConstructorTypes.gen.ts');
       // Must use the stricter constructable check, NOT a bare typeof
       expect(out).toContain(`typeof(obj.ctor) === "function" && 'prototype' in obj.ctor`);
-      expect(out).not.toContain('CastToComponentConstructor');
+      // The interface property check must be inline, not a delegated call to the cast function
+      expect(out).not.toContain('CastToComponentConstructor(obj.ctor)');
     } finally {
       cleanup();
     }
@@ -590,6 +591,144 @@ describe('generateCodegenForPath - directory', () => {
       expect(fs.existsSync(path.join(root, 'User.gen.ts'))).toBe(false);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Record<K, V> handling and node_modules-declared types
+// ---------------------------------------------------------------------------
+
+describe('generateCodegen - Record<K, V> properties', () => {
+  it('emits an inline structural check rather than referencing CastToRecord', () => {
+    const { run, read, cleanup } = scratch(['RecordCase.ts']);
+    try {
+      run();
+      const out = read('RecordCase.gen.ts');
+      // Must not reference the (nonexistent) CastToRecord
+      expect(out).not.toContain('CastToRecord');
+      // Must not import from node_modules
+      expect(out).not.toContain('node_modules');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('checks values against the V type when V is primitive', () => {
+    const { run, read, cleanup } = scratch(['RecordCase.ts']);
+    try {
+      run();
+      const out = read('RecordCase.gen.ts');
+      // IThing.meta: Record<string, number>
+      expect(out).toContain('typeof(obj.meta) === "object"');
+      expect(out).toContain('!Array.isArray(obj.meta)');
+      expect(out).toContain('Object.values(obj.meta)');
+      expect(out).toContain('typeof v === "number"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('delegates to a named cast function when V is a user interface', () => {
+    const { run, read, cleanup } = scratch(['RecordCase.ts']);
+    try {
+      run();
+      const out = read('RecordCase.gen.ts');
+      // IRegistry.byId: Record<string, IInner>
+      expect(out).toContain('Object.values(obj.byId)');
+      expect(out).toContain('CastToInner(v) !== null');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('checks keys against a string-literal union when K is constrained', () => {
+    const { run, read, cleanup } = scratch(['RecordCase.ts']);
+    try {
+      run();
+      const out = read('RecordCase.gen.ts');
+      // IKeyedFlags.flags: Record<'a' | 'b' | 'c', boolean>
+      expect(out).toContain('Object.keys(obj.flags)');
+      expect(out).toContain('k === "a"');
+      expect(out).toContain('k === "b"');
+      expect(out).toContain('k === "c"');
+      expect(out).toContain('typeof v === "boolean"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('handles Record inside a type alias', () => {
+    const { run, read, cleanup } = scratch(['RecordCase.ts']);
+    try {
+      run();
+      const out = read('RecordCase.gen.ts');
+      // Bag.byKey: Record<string, string>
+      expect(out).toContain('Object.values(obj.byKey)');
+      expect(out).toContain('typeof v === "string"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('omits key-param type annotation in JS output', () => {
+    const { run, read, cleanup } = scratch(['RecordCase.ts'], { outputLanguage: 'js' });
+    try {
+      run();
+      const out = read('RecordCase.gen.js');
+      expect(out).not.toContain('(k: string)');
+      expect(out).not.toContain('(v: unknown)');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('generateCodegen - node_modules type references', () => {
+  it('falls back to an existence check by default (no node_modules import)', () => {
+    const { run, read, exists, cleanup } = scratch(['NodeModulesTypes.ts']);
+    try {
+      run();
+      const out = read('NodeModulesTypes.gen.ts');
+      // Date is in node_modules — must not reference CastToDate or import from node_modules
+      expect(out).not.toContain('CastToDate');
+      expect(out).not.toContain('node_modules');
+      // Expect the existence-check fallback
+      expect(out).toContain('typeof(obj.occurredAt) !== "undefined"');
+      // The opt-in side-file must NOT exist
+      expect(exists('gencast.nodemodules.gen.ts')).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('writes the shared node_modules gen file when generateNodeModulesCasts is true', () => {
+    const { dir, run, read, exists, cleanup } = scratch(['NodeModulesTypes.ts']);
+    try {
+      // The shared file is resolved relative to process.cwd(), so write it next to the fixture.
+      const cwd = process.cwd();
+      try {
+        process.chdir(dir);
+        run({
+          generateNodeModulesCasts: true,
+          nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
+        });
+      } finally {
+        process.chdir(cwd);
+      }
+
+      // Side file exists with a CastToDate function
+      expect(exists('gencast.nodemodules.gen.ts')).toBe(true);
+      const sideFile = fs.readFileSync(path.join(dir, 'gencast.nodemodules.gen.ts'), 'utf8');
+      expect(sideFile).toContain('export function CastToDate');
+
+      // Caller imports from the side file rather than from node_modules
+      const out = read('NodeModulesTypes.gen.ts');
+      expect(out).toContain('CastToDate(obj.occurredAt) !== null');
+      expect(out).toContain("from './gencast.nodemodules.gen'");
+      expect(out).not.toContain('node_modules');
+    } finally {
+      cleanup();
     }
   });
 });
