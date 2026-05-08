@@ -275,37 +275,85 @@ const DEFAULT_CONFIG: Required<GenCastConfig> = {
 };
 
 /**
- * Attempts to load gencast.config.js from the current working directory.
- * Returns an empty object if the file doesn't exist or cannot be loaded.
+ * Returns true when the nearest package.json declares `"type": "module"`,
+ * meaning a plain `.js` file in the project is treated as ESM and cannot be
+ * loaded via `require`. In that case the config must use the `.cjs` extension.
+ */
+function isEsmPackage(cwd: string = process.cwd()): boolean {
+  const pkgPath = path.resolve(cwd, 'package.json');
+  if (!fs.existsSync(pkgPath)) {
+    return false;
+  }
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+    return pkg.type === 'module';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Attempts to load gencast.config.cjs or gencast.config.js from the current
+ * working directory. `.cjs` is preferred and is required when the surrounding
+ * package.json has `"type": "module"` (loading a `.js` file via require would
+ * fail with ERR_REQUIRE_ESM in that case).
+ * Returns an empty object if no config exists or it cannot be loaded.
  */
 export function loadConfig(): GenCastConfig {
-  const configPath = path.resolve(process.cwd(), 'gencast.config.js');
+  const cjsPath = path.resolve(process.cwd(), 'gencast.config.cjs');
+  const jsPath = path.resolve(process.cwd(), 'gencast.config.js');
 
-  if (!fs.existsSync(configPath)) {
+  let configPath: string | null = null;
+  if (fs.existsSync(cjsPath)) {
+    configPath = cjsPath;
+  } else if (fs.existsSync(jsPath)) {
+    configPath = jsPath;
+  }
+
+  if (!configPath) {
+    return {};
+  }
+
+  if (configPath === jsPath && isEsmPackage()) {
+    console.warn(
+      'Warning: gencast.config.js cannot be loaded because this package has "type": "module". ' +
+        'Rename it to gencast.config.cjs (and use module.exports = ...) so it is treated as CommonJS.'
+    );
     return {};
   }
 
   try {
-    // Use require to load the config file
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const config = require(configPath);
     console.log(`Loaded configuration from ${configPath}\n`);
     return config;
   } catch (error) {
-    console.warn(`Warning: Failed to load gencast.config.js: ${error}`);
+    console.warn(`Warning: Failed to load ${path.basename(configPath)}: ${error}`);
     return {};
   }
 }
 
 /**
- * Generates a gencast.config.js file with default values and documentation.
+ * Generates a gencast configuration file with default values and documentation.
+ * Writes `gencast.config.cjs` when the package is ESM (`"type": "module"`),
+ * otherwise `gencast.config.js`.
  * @returns true if the file was created, false if it already exists
  */
 export function initConfig(): boolean {
-  const configPath = path.resolve(process.cwd(), 'gencast.config.js');
+  const useCjs = isEsmPackage();
+  const configFileName = useCjs ? 'gencast.config.cjs' : 'gencast.config.js';
+  const configPath = path.resolve(process.cwd(), configFileName);
+  const otherPath = path.resolve(
+    process.cwd(),
+    useCjs ? 'gencast.config.js' : 'gencast.config.cjs'
+  );
 
   if (fs.existsSync(configPath)) {
-    console.error('Error: gencast.config.js already exists in this directory.');
+    console.error(`Error: ${configFileName} already exists in this directory.`);
+    return false;
+  }
+  if (fs.existsSync(otherPath)) {
+    console.error(`Error: ${path.basename(otherPath)} already exists in this directory.`);
     return false;
   }
 
@@ -372,11 +420,11 @@ module.exports = {
 
   try {
     fs.writeFileSync(configPath, configContent, 'utf8');
-    console.log(`✅ Created ${process.cwd()}/gencast.config.js`);
+    console.log(`✅ Created ${configPath}`);
     console.log('\nYou can now customize the configuration options to fit your project.');
     return true;
   } catch (error) {
-    console.error(`Error: Failed to create gencast.config.js: ${error}`);
+    console.error(`Error: Failed to create ${configFileName}: ${error}`);
     return false;
   }
 }

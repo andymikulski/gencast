@@ -129,14 +129,63 @@ export interface GenCastConfig {
      * @default false
      */
     enableWeakMapCaching?: boolean;
+    /**
+     * If `true`, array property checks for named object types (interfaces and type aliases) will
+     * use the `CastToArray` utility function instead of an inline
+     * `Array.isArray(...) && (...).every(...)` expression.
+     *
+     * For example, a `users: IUser[]` property generates:
+     * - `false` (default): `Array.isArray(obj.users) && obj.users.every((item: unknown) => CastToUser(item) !== null)`
+     * - `true`: `CastToArray(obj.users, CastToUser) !== null`
+     *
+     * When enabled, the utility file at `utilsFilePath` will be created if it does not already
+     * exist, since `CastToArray` must be available at runtime.
+     *
+     * @default false
+     */
+    useUtilityArrayCast?: boolean;
+    /**
+     * The path (relative to the current working directory) for the shared utility casts file.
+     * Used when `useUtilityArrayCast` is `true`. Supports the `[ext]` placeholder.
+     *
+     * @default './gencast.gen.[ext]'
+     */
+    utilsFilePath?: string;
+    /**
+     * If `true`, when a property's type is declared in `node_modules` (e.g. types from
+     * `lib.*.d.ts` or third-party `@types/*` packages), a structural cast function for
+     * it will be generated into a separate shared file at `nodeModulesCastsFilePath`,
+     * and other gen files will import from there.
+     *
+     * When `false` (default), references to `node_modules`-declared types are skipped:
+     * no `CastToX` call is emitted and no import to deep `node_modules` paths is created.
+     * Such properties fall back to a basic existence check.
+     *
+     * `Record<K, V>` is always handled inline regardless of this flag.
+     *
+     * @default false
+     */
+    generateNodeModulesCasts?: boolean;
+    /**
+     * The path (relative to the current working directory) for the shared node_modules casts file.
+     * Used when `generateNodeModulesCasts` is `true`. Supports the `[ext]` placeholder.
+     *
+     * @default './gencast.nodemodules.gen.[ext]'
+     */
+    nodeModulesCastsFilePath?: string;
 }
 /**
- * Attempts to load gencast.config.js from the current working directory.
- * Returns an empty object if the file doesn't exist or cannot be loaded.
+ * Attempts to load gencast.config.cjs or gencast.config.js from the current
+ * working directory. `.cjs` is preferred and is required when the surrounding
+ * package.json has `"type": "module"` (loading a `.js` file via require would
+ * fail with ERR_REQUIRE_ESM in that case).
+ * Returns an empty object if no config exists or it cannot be loaded.
  */
 export declare function loadConfig(): GenCastConfig;
 /**
- * Generates a gencast.config.js file with default values and documentation.
+ * Generates a gencast configuration file with default values and documentation.
+ * Writes `gencast.config.cjs` when the package is ESM (`"type": "module"`),
+ * otherwise `gencast.config.js`.
  * @returns true if the file was created, false if it already exists
  */
 export declare function initConfig(): boolean;
@@ -146,6 +195,15 @@ export declare function initConfig(): boolean;
  * @returns true if the settings were updated successfully
  */
 export declare function updateVSCodeSettings(): boolean;
+/**
+ * Generates cast functions for a single file or all files under a directory.
+ * The project is still loaded from tsconfig so cross-file type references resolve correctly,
+ * but only the files that match `targetPath` are written.
+ *
+ * @param targetPath Absolute or cwd-relative path to a `.ts` file or directory
+ * @param userConfig Optional configuration to override defaults
+ */
+export declare function generateCodegenForPath(targetPath: string, userConfig?: GenCastConfig): void;
 /**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults

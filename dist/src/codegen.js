@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.loadConfig = loadConfig;
 exports.initConfig = initConfig;
 exports.updateVSCodeSettings = updateVSCodeSettings;
+exports.generateCodegenForPath = generateCodegenForPath;
 exports.generateCodegen = generateCodegen;
 exports.generateUtilityCastsFile = generateUtilityCastsFile;
 const fs_1 = __importDefault(require("fs"));
@@ -29,6 +30,28 @@ const Utils = {
 // This file was generated from \`${file.getBaseName()}\` by executing GenCast.\n`;
     },
 };
+// ---------------------------------------------------------------------------
+// node_modules / Record helpers
+// ---------------------------------------------------------------------------
+/** True if the declaration's source file lives under a node_modules directory. */
+function isInNodeModules(decl) {
+    var _a, _b, _c;
+    const fp = (_c = (_b = (_a = decl === null || decl === void 0 ? void 0 : decl.getSourceFile) === null || _a === void 0 ? void 0 : _a.call(decl)) === null || _b === void 0 ? void 0 : _b.getFilePath()) !== null && _c !== void 0 ? _c : '';
+    return fp.replace(/\\/g, '/').includes('/node_modules/');
+}
+/**
+ * True for `Record<K, V>` where the alias declaration lives in node_modules
+ * (i.e. the standard-library `Record`, not a user-defined alias of the same name).
+ */
+function isRecordType(type) {
+    const aliasSymbol = type.getAliasSymbol();
+    if (!aliasSymbol || aliasSymbol.getName() !== 'Record')
+        return false;
+    if (type.getAliasTypeArguments().length !== 2)
+        return false;
+    const decl = aliasSymbol.getDeclarations()[0];
+    return decl ? isInNodeModules(decl) : false;
+}
 // Default configuration
 const DEFAULT_CONFIG = {
     tsconfigPath: './tsconfig.json',
@@ -45,36 +68,82 @@ const DEFAULT_CONFIG = {
     failureReturnValue: 'null',
     strictNullCheck: false,
     enableWeakMapCaching: false,
+    useUtilityArrayCast: false,
+    utilsFilePath: './gencast.gen.[ext]',
+    generateNodeModulesCasts: false,
+    nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
 };
 /**
- * Attempts to load gencast.config.js from the current working directory.
- * Returns an empty object if the file doesn't exist or cannot be loaded.
+ * Returns true when the nearest package.json declares `"type": "module"`,
+ * meaning a plain `.js` file in the project is treated as ESM and cannot be
+ * loaded via `require`. In that case the config must use the `.cjs` extension.
+ */
+function isEsmPackage(cwd = process.cwd()) {
+    const pkgPath = path_1.default.resolve(cwd, 'package.json');
+    if (!fs_1.default.existsSync(pkgPath)) {
+        return false;
+    }
+    try {
+        const pkg = JSON.parse(fs_1.default.readFileSync(pkgPath, 'utf8'));
+        return pkg.type === 'module';
+    }
+    catch (_a) {
+        return false;
+    }
+}
+/**
+ * Attempts to load gencast.config.cjs or gencast.config.js from the current
+ * working directory. `.cjs` is preferred and is required when the surrounding
+ * package.json has `"type": "module"` (loading a `.js` file via require would
+ * fail with ERR_REQUIRE_ESM in that case).
+ * Returns an empty object if no config exists or it cannot be loaded.
  */
 function loadConfig() {
-    const configPath = path_1.default.resolve(process.cwd(), 'gencast.config.js');
-    if (!fs_1.default.existsSync(configPath)) {
+    const cjsPath = path_1.default.resolve(process.cwd(), 'gencast.config.cjs');
+    const jsPath = path_1.default.resolve(process.cwd(), 'gencast.config.js');
+    let configPath = null;
+    if (fs_1.default.existsSync(cjsPath)) {
+        configPath = cjsPath;
+    }
+    else if (fs_1.default.existsSync(jsPath)) {
+        configPath = jsPath;
+    }
+    if (!configPath) {
+        return {};
+    }
+    if (configPath === jsPath && isEsmPackage()) {
+        console.warn('Warning: gencast.config.js cannot be loaded because this package has "type": "module". ' +
+            'Rename it to gencast.config.cjs (and use module.exports = ...) so it is treated as CommonJS.');
         return {};
     }
     try {
-        // Use require to load the config file
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const config = require(configPath);
         console.log(`Loaded configuration from ${configPath}\n`);
         return config;
     }
     catch (error) {
-        console.warn(`Warning: Failed to load gencast.config.js: ${error}`);
+        console.warn(`Warning: Failed to load ${path_1.default.basename(configPath)}: ${error}`);
         return {};
     }
 }
 /**
- * Generates a gencast.config.js file with default values and documentation.
+ * Generates a gencast configuration file with default values and documentation.
+ * Writes `gencast.config.cjs` when the package is ESM (`"type": "module"`),
+ * otherwise `gencast.config.js`.
  * @returns true if the file was created, false if it already exists
  */
 function initConfig() {
-    const configPath = path_1.default.resolve(process.cwd(), 'gencast.config.js');
+    const useCjs = isEsmPackage();
+    const configFileName = useCjs ? 'gencast.config.cjs' : 'gencast.config.js';
+    const configPath = path_1.default.resolve(process.cwd(), configFileName);
+    const otherPath = path_1.default.resolve(process.cwd(), useCjs ? 'gencast.config.js' : 'gencast.config.cjs');
     if (fs_1.default.existsSync(configPath)) {
-        console.error('Error: gencast.config.js already exists in this directory.');
+        console.error(`Error: ${configFileName} already exists in this directory.`);
+        return false;
+    }
+    if (fs_1.default.existsSync(otherPath)) {
+        console.error(`Error: ${path_1.default.basename(otherPath)} already exists in this directory.`);
         return false;
     }
     const configContent = `/** @type {import('gencast').GenCastConfig} */
@@ -120,16 +189,31 @@ module.exports = {
   // Cache cast results in a per-function WeakMap keyed on the input object (default: false)
   // Speeds up repeated casts of the same object; only applies to interface/object-type casts
   enableWeakMapCaching: false,
+
+  // Use CastToArray utility for array-of-named-type checks instead of inline .every() (default: false)
+  // When enabled, the utility file at utilsFilePath is created if it does not exist.
+  useUtilityArrayCast: false,
+
+  // Path to the shared utility casts file, used when useUtilityArrayCast is true (default: './gencast.gen.[ext]')
+  utilsFilePath: './gencast.gen.[ext]',
+
+  // Generate cast functions for types declared in node_modules into a separate shared file (default: false)
+  // When false, references to node_modules-declared types fall back to a typeof !== "undefined" check.
+  // Record<K, V> is always handled inline regardless of this flag.
+  generateNodeModulesCasts: false,
+
+  // Path to the shared node_modules casts file, used when generateNodeModulesCasts is true (default: './gencast.nodemodules.gen.[ext]')
+  nodeModulesCastsFilePath: './gencast.nodemodules.gen.[ext]',
 };
 `;
     try {
         fs_1.default.writeFileSync(configPath, configContent, 'utf8');
-        console.log(`✅ Created ${process.cwd()}/gencast.config.js`);
+        console.log(`✅ Created ${configPath}`);
         console.log('\nYou can now customize the configuration options to fit your project.');
         return true;
     }
     catch (error) {
-        console.error(`Error: Failed to create gencast.config.js: ${error}`);
+        console.error(`Error: Failed to create ${configFileName}: ${error}`);
         return false;
     }
 }
@@ -204,6 +288,67 @@ function updateVSCodeSettings() {
     }
 }
 /**
+ * Generates cast functions for a single file or all files under a directory.
+ * The project is still loaded from tsconfig so cross-file type references resolve correctly,
+ * but only the files that match `targetPath` are written.
+ *
+ * @param targetPath Absolute or cwd-relative path to a `.ts` file or directory
+ * @param userConfig Optional configuration to override defaults
+ */
+function generateCodegenForPath(targetPath, userConfig = {}) {
+    const config = {
+        ...DEFAULT_CONFIG,
+        ...userConfig,
+    };
+    // When useUtilityArrayCast is enabled, ensure the shared utility file exists
+    if (config.useUtilityArrayCast) {
+        const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+        const utilsPath = path_1.default.resolve(process.cwd(), config.utilsFilePath.replace('[ext]', ext));
+        if (!fs_1.default.existsSync(utilsPath)) {
+            generateUtilityCastsFile(config.utilsFilePath, config);
+        }
+    }
+    const tsconfigPath = path_1.default.resolve(process.cwd(), config.tsconfigPath);
+    const resolvedTarget = path_1.default.resolve(process.cwd(), targetPath);
+    console.log('GenCast - Generating runtime cast methods...');
+    console.log(`Using tsconfig: ${tsconfigPath}`);
+    console.log(`Target: ${resolvedTarget}\n`);
+    const project = new ts_morph_1.Project();
+    project.addSourceFilesFromTsConfig(tsconfigPath);
+    const allSourceFiles = project.getSourceFiles();
+    // Determine whether the target is a file or directory
+    let targetFiles;
+    const isDirectory = fs_1.default.existsSync(resolvedTarget) && fs_1.default.statSync(resolvedTarget).isDirectory();
+    if (isDirectory) {
+        // Normalise to forward slashes for consistent comparison with ts-morph paths
+        const normalizedDir = resolvedTarget.replace(/\\/g, '/');
+        targetFiles = allSourceFiles.filter((sf) => sf.getFilePath().startsWith(normalizedDir + '/'));
+    }
+    else {
+        const normalizedTarget = resolvedTarget.replace(/\\/g, '/');
+        targetFiles = allSourceFiles.filter((sf) => sf.getFilePath() === normalizedTarget);
+        if (targetFiles.length === 0) {
+            console.error(`Error: file not found in project: ${resolvedTarget}`);
+            process.exit(1);
+        }
+    }
+    if (targetFiles.length === 0) {
+        console.log('No matching source files found.');
+        return;
+    }
+    const genImportGraph = config.preferReuseCastFunctions
+        ? computeGenImportGraph(allSourceFiles, config)
+        : new Map();
+    const nodeModulesCasts = config.generateNodeModulesCasts
+        ? new Map()
+        : undefined;
+    targetFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph, nodeModulesCasts));
+    if (nodeModulesCasts && nodeModulesCasts.size > 0) {
+        writeNodeModulesCastsFile(config, nodeModulesCasts);
+    }
+    console.log('\nDone generating casts\n');
+}
+/**
  * Main entry point for GenCast code generation
  * @param userConfig Optional configuration to override defaults
  */
@@ -212,6 +357,14 @@ function generateCodegen(userConfig = {}) {
         ...DEFAULT_CONFIG,
         ...userConfig,
     };
+    // When useUtilityArrayCast is enabled, ensure the shared utility file exists
+    if (config.useUtilityArrayCast) {
+        const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+        const utilsPath = path_1.default.resolve(process.cwd(), config.utilsFilePath.replace('[ext]', ext));
+        if (!fs_1.default.existsSync(utilsPath)) {
+            generateUtilityCastsFile(config.utilsFilePath, config);
+        }
+    }
     // Resolve the tsconfig path
     const tsconfigPath = path_1.default.resolve(process.cwd(), config.tsconfigPath);
     console.log('GenCast - Generating runtime cast methods...');
@@ -226,8 +379,14 @@ function generateCodegen(userConfig = {}) {
     const genImportGraph = config.preferReuseCastFunctions
         ? computeGenImportGraph(allSourceFiles, config)
         : new Map();
+    const nodeModulesCasts = config.generateNodeModulesCasts
+        ? new Map()
+        : undefined;
     // Process each file and output the relevant file
-    allSourceFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph));
+    allSourceFiles.forEach((file) => generateCodegenFile(file, config, genImportGraph, nodeModulesCasts));
+    if (nodeModulesCasts && nodeModulesCasts.size > 0) {
+        writeNodeModulesCastsFile(config, nodeModulesCasts);
+    }
     console.log('\nDone generating casts\n');
 }
 /**
@@ -326,7 +485,7 @@ function computeGenImportGraph(sourceFiles, config) {
             .forEach((iface) => {
             // Inheritance - would call the base's cast function
             iface.getBaseDeclarations().forEach((base) => {
-                if (base.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
+                if (base.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) && !isInNodeModules(base)) {
                     const baseFilePath = base.getSourceFile().getFilePath();
                     if (baseFilePath !== sfPath)
                         deps.add(baseFilePath);
@@ -357,7 +516,7 @@ function collectComplexTypeDep(propType, currentFilePath, deps) {
     const symbol = (_a = propType.getAliasSymbol()) !== null && _a !== void 0 ? _a : propType.getSymbol();
     const decl = ((_b = symbol === null || symbol === void 0 ? void 0 : symbol.getDeclarations()) !== null && _b !== void 0 ? _b : []).find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
         d.isKind(ts_morph_1.ts.SyntaxKind.TypeAliasDeclaration));
-    if (decl) {
+    if (decl && !isInNodeModules(decl)) {
         const declFilePath = decl.getSourceFile().getFilePath();
         if (declFilePath !== currentFilePath)
             deps.add(declFilePath);
@@ -433,7 +592,7 @@ function genModuleSpecifierSuffix(config) {
     return rawSuffix.replace('[ext]', ext).replace(/\.(ts|js)$/, '');
 }
 // ---------------------------------------------------------------------------
-function generateCodegenFile(sourceFile, config, genImportGraph) {
+function generateCodegenFile(sourceFile, config, genImportGraph, nodeModulesCasts) {
     var _a, _b, _c;
     // If this function is called on a previously-generated file, ignore it
     if (isGeneratedFile(sourceFile.getBaseName(), config)) {
@@ -521,13 +680,17 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
     let valueImports = new Map();
     // Track cast function imports from other generated files when preferReuseCastFunctions is true
     let genFunctionImports = new Map();
+    // Track utility function names (e.g. CastToArray) needed from the shared utility file
+    const utilityImports = new Set();
+    // Track cast function names this file needs to import from the node_modules gen file
+    const nodeModulesImports = new Set();
     let generatedCode = '';
     let hasOutput = false;
     const isJS = config.outputLanguage === 'js';
     // for each interface found in this source file...
     interfaces.forEach((int) => {
         const interfaceName = int.getName();
-        var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config, false, cyclicFilePaths);
+        var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config, false, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
         if (compiledPropChecks.length === 0) {
             const color = config.outputEmptyInterfaces ? '\x1b[33m' : '\x1b[31m';
             // console.warn(
@@ -675,7 +838,7 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
         if (!typeName) {
             return;
         }
-        var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config, cyclicFilePaths);
+        var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
         if (compiledPropChecks.length === 0) {
             const color = config.outputEmptyInterfaces ? '🟨' : '❌';
             console.warn(`  ${color} No prop checks found for type "${typeName}"`);
@@ -964,6 +1127,26 @@ function generateCodegenFile(sourceFile, config, genImportGraph) {
             importString += `import { ${namedImports.join(', ')} } from '${relativePath}';\n`;
         }
     }
+    // Generate utility function imports (e.g. CastToArray) from the shared utility file
+    if (utilityImports.size > 0) {
+        const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+        const utilsAbsPath = path_1.default.resolve(process.cwd(), config.utilsFilePath.replace('[ext]', ext));
+        const utilsRelPath = path_1.default.relative(sourceFile.getDirectoryPath(), utilsAbsPath)
+            .replace(/\\/g, '/')
+            .replace(/\.(ts|js)$/, '');
+        const utilsModuleSpec = utilsRelPath.startsWith('.') ? utilsRelPath : `./${utilsRelPath}`;
+        importString += `import { ${[...utilityImports].join(', ')} } from '${utilsModuleSpec}';\n`;
+    }
+    // Generate node_modules cast imports from the shared node_modules gen file
+    if (nodeModulesImports.size > 0) {
+        const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+        const nmAbsPath = path_1.default.resolve(process.cwd(), config.nodeModulesCastsFilePath.replace('[ext]', ext));
+        const nmRelPath = path_1.default.relative(sourceFile.getDirectoryPath(), nmAbsPath)
+            .replace(/\\/g, '/')
+            .replace(/\.(ts|js)$/, '');
+        const nmModuleSpec = nmRelPath.startsWith('.') ? nmRelPath : `./${nmRelPath}`;
+        importString += `import { ${[...nodeModulesImports].join(', ')} } from '${nmModuleSpec}';\n`;
+    }
     generatedCode =
         Utils.getGenfileHeader(sourceFile) + importString + generatedCode;
     fs_1.default.writeFileSync(outputFilePath, generatedCode);
@@ -1003,7 +1186,7 @@ function addConstraintTypeToImports(constraintType, currentSourceFile, typeImpor
         typeImports.set(declFile, list);
     }
 }
-function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config, isInherited = false, cyclicFilePaths = new Set()) {
+function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config, isInherited = false, cyclicFilePaths = new Set(), utilityImports, nodeModulesCasts, nodeModulesImports) {
     var _a;
     const propertiesCheckCode = [];
     const interfaceName = interfaceDeclaration.getName();
@@ -1025,6 +1208,18 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
             var _a;
             if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
                 const baseInterface = i;
+                const baseInNm = isInNodeModules(baseInterface);
+                if (baseInNm) {
+                    const baseName = baseInterface.getName();
+                    if (config.generateNodeModulesCasts && nodeModulesCasts && nodeModulesImports) {
+                        const baseFuncName = `${config.funcPrefix}${removeIPrefixMaybe(baseName, config.removeIPrefix)}`;
+                        nodeModulesCasts.set(baseName, { symbolName: baseName, decl: baseInterface });
+                        nodeModulesImports.add(baseFuncName);
+                        propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
+                    }
+                    // Default: silently skip the base check (can't reference node_modules types).
+                    return;
+                }
                 const baseFile = baseInterface.getSourceFile();
                 const isCrossFile = baseFile.getFilePath() !== currentSourceFile.getFilePath();
                 const wouldCycle = isCrossFile && cyclicFilePaths.has(baseFile.getFilePath());
@@ -1033,7 +1228,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                     // generated files - fall back to inlining all its property checks instead.
                     const baseName = baseInterface.getName();
                     console.log(`  \t↳ ${interfaceName} extends ${baseName}: inlining (cycle detected)`);
-                    const subProps = processInterface(baseInterface, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths);
+                    const subProps = processInterface(baseInterface, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
                     propertiesCheckCode.push(...subProps);
                 }
                 else {
@@ -1052,7 +1247,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
             else if (i.isKind(ts_morph_1.ts.SyntaxKind.TypeLiteral)) {
                 // Non-interface base (e.g. an inline object type or a type alias resolved to a type
                 // literal) - there is no separately generated cast function to call, so always inline.
-                const subProps = processTypeLiteral(i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
+                const subProps = processTypeLiteral(i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
                 propertiesCheckCode.push(...subProps);
             }
         });
@@ -1063,12 +1258,18 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
                 return propertiesCheckCode;
             }
             if (i.isKind(ts_morph_1.ts.SyntaxKind.TypeLiteral)) {
-                const subProps = processTypeLiteral(i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
+                const subProps = processTypeLiteral(i, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
                 propertiesCheckCode.push(...subProps);
             }
             else if (i.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
+                const baseInterface = i;
+                if (isInNodeModules(baseInterface)) {
+                    // Cannot inline a node_modules-declared base — its declaration may not be a simple
+                    // structural interface (could be ambient/built-in). Skip.
+                    return;
+                }
                 // Only process as InterfaceDeclaration if it actually is one
-                const subProps = processInterface(i, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths);
+                const subProps = processInterface(baseInterface, importsRef, genFunctionImportsRef, currentSourceFile, config, true, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
                 propertiesCheckCode.push(...subProps);
             }
             // Skip other base declaration types (e.g., type references like Partial<T>)
@@ -1091,8 +1292,13 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
         if (type.isArray()) {
             const elementType = type.getArrayElementType();
             propertiesCheckCode.push(elementType
-                ? generateArrayPropertyCheck(`obj.${propName}`, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+                ? generateArrayPropertyCheck(`obj.${propName}`, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports)
                 : `Array.isArray(obj.${propName})`);
+            return;
+        }
+        // Record<K, V> — emit an inline structural check rather than referencing CastToRecord.
+        if (isRecordType(type)) {
+            propertiesCheckCode.push(generateRecordCheck(`obj.${propName}`, type, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports));
             return;
         }
         // Handle tuple types (e.g. payPerDay: [number, 'a' | 'b']) before the type-arguments bailout
@@ -1143,6 +1349,19 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
             const decl = ((_b = symbol === null || symbol === void 0 ? void 0 : symbol.getDeclarations()) !== null && _b !== void 0 ? _b : []).find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
                 d.isKind(ts_morph_1.ts.SyntaxKind.TypeAliasDeclaration));
             if (decl && symbol) {
+                if (isInNodeModules(decl)) {
+                    if (config.generateNodeModulesCasts && nodeModulesCasts && nodeModulesImports) {
+                        const typeName = symbol.getName();
+                        const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+                        nodeModulesCasts.set(typeName, { symbolName: typeName, decl: decl });
+                        nodeModulesImports.add(funcName);
+                        propertiesCheckCode.push(`${funcName}(obj.${propName}) !== ${config.failureReturnValue}`);
+                        return;
+                    }
+                    // Default: don't reference node_modules — fall back to existence check.
+                    propertiesCheckCode.push(`typeof(obj.${propName}) !== "undefined"`);
+                    return;
+                }
                 const declFile = decl.getSourceFile();
                 const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
                 const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
@@ -1192,7 +1411,7 @@ function processInterface(interfaceDeclaration, importsRef, genFunctionImportsRe
     }
     return propertiesCheckCode;
 }
-function processTypeLiteral(interfaceDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths) {
+function processTypeLiteral(interfaceDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports) {
     const propertiesCheckCode = [];
     // Check the fields for the given interface, confirming the types are correct
     interfaceDeclaration.getProperties().forEach((prop) => {
@@ -1205,8 +1424,13 @@ function processTypeLiteral(interfaceDeclaration, genFunctionImportsRef, current
         if (type.isArray() && genFunctionImportsRef && currentSourceFile && config) {
             const elementType = type.getArrayElementType();
             propertiesCheckCode.push(elementType
-                ? generateArrayPropertyCheck(`obj.${propName}`, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+                ? generateArrayPropertyCheck(`obj.${propName}`, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports)
                 : `Array.isArray(obj.${propName})`);
+            return;
+        }
+        // Record<K, V> — emit an inline structural check rather than referencing CastToRecord.
+        if (isRecordType(type) && genFunctionImportsRef && currentSourceFile && config) {
+            propertiesCheckCode.push(generateRecordCheck(`obj.${propName}`, type, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths !== null && cyclicFilePaths !== void 0 ? cyclicFilePaths : new Set(), utilityImports, nodeModulesCasts, nodeModulesImports));
             return;
         }
         if (type.getTypeArguments().length > 0) {
@@ -1239,8 +1463,12 @@ function processTypeLiteral(interfaceDeclaration, genFunctionImportsRef, current
  *
  * Returns `null` when the type has no properties and no better check can be produced.
  */
-function generateComplexTypeCheck(propRef, propType, location, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths = new Set()) {
+function generateComplexTypeCheck(propRef, propType, location, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths = new Set(), utilityImports, nodeModulesCasts, nodeModulesImports) {
     var _a, _b, _c;
+    // Record<K, V> — emit an inline structural check rather than treating it as a named type.
+    if (isRecordType(propType)) {
+        return generateRecordCheck(propRef, propType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+    }
     const properties = propType.getProperties();
     if (properties.length === 0)
         return null;
@@ -1254,6 +1482,17 @@ function generateComplexTypeCheck(propRef, propType, location, genFunctionImport
         const decl = decls.find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
             d.isKind(ts_morph_1.ts.SyntaxKind.TypeAliasDeclaration));
         if (decl && symbol) {
+            if (isInNodeModules(decl)) {
+                if (config.generateNodeModulesCasts && nodeModulesCasts && nodeModulesImports) {
+                    const typeName = symbol.getName();
+                    const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+                    nodeModulesCasts.set(typeName, { symbolName: typeName, decl: decl });
+                    nodeModulesImports.add(funcName);
+                    return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
+                }
+                // Default: don't reference node_modules — fall back to existence check.
+                return `typeof(${propRef}) !== "undefined"`;
+            }
             const declFile = decl.getSourceFile();
             const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
             const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
@@ -1298,7 +1537,7 @@ function generateComplexTypeCheck(propRef, propType, location, genFunctionImport
  *   delegates to it: `Array.isArray(propRef) && propRef.every(item => CastToX(item) !== null)`
  * - Falls back to a bare `Array.isArray(propRef)` when the element type cannot be resolved.
  */
-function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths = new Set()) {
+function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths = new Set(), utilityImports, nodeModulesCasts, nodeModulesImports) {
     var _a, _b, _c;
     const failureValue = config.failureReturnValue;
     const isJS = config.outputLanguage === 'js';
@@ -1311,6 +1550,11 @@ function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef,
         return `${base} && ${propRef}.every(${itemParam} => typeof item === "number")`;
     if (elementType.isBoolean())
         return `${base} && ${propRef}.every(${itemParam} => typeof item === "boolean")`;
+    // Record<K, V> as the element type — emit an inline structural check for each item.
+    if (isRecordType(elementType)) {
+        const recordCheck = generateRecordCheck('item', elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+        return `${base} && ${propRef}.every(${itemParam} => ${recordCheck})`;
+    }
     // Named object type (interface or type alias) - call its cast function in .every()
     if (elementType.isObject()) {
         // Constructor types cannot be structurally validated; fall back to the array-only check.
@@ -1321,6 +1565,21 @@ function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef,
         const decl = ((_b = symbol === null || symbol === void 0 ? void 0 : symbol.getDeclarations()) !== null && _b !== void 0 ? _b : []).find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
             d.isKind(ts_morph_1.ts.SyntaxKind.TypeAliasDeclaration));
         if (decl && symbol) {
+            if (isInNodeModules(decl)) {
+                if (config.generateNodeModulesCasts && nodeModulesCasts && nodeModulesImports) {
+                    const typeName = symbol.getName();
+                    const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+                    nodeModulesCasts.set(typeName, { symbolName: typeName, decl: decl });
+                    nodeModulesImports.add(funcName);
+                    if (config.useUtilityArrayCast && utilityImports) {
+                        utilityImports.add('CastToArray');
+                        return `CastToArray(${propRef}, ${funcName}) !== ${failureValue}`;
+                    }
+                    return `${base} && ${propRef}.every(${itemParam} => ${funcName}(item) !== ${failureValue})`;
+                }
+                // Default: don't reference node_modules — fall back to the array-only check.
+                return base;
+            }
             const declFile = decl.getSourceFile();
             const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
             const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
@@ -1332,6 +1591,10 @@ function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef,
                     funcSet.add(funcName);
                     genFunctionImportsRef.set(declFile, funcSet);
                 }
+                if (config.useUtilityArrayCast && utilityImports) {
+                    utilityImports.add('CastToArray');
+                    return `CastToArray(${propRef}, ${funcName}) !== ${failureValue}`;
+                }
                 return `${base} && ${propRef}.every(${itemParam} => ${funcName}(item) !== ${failureValue})`;
             }
         }
@@ -1339,7 +1602,7 @@ function generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef,
     // Fallback: just confirm it is an array
     return base;
 }
-function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths = new Set()) {
+function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths = new Set(), utilityImports, nodeModulesCasts, nodeModulesImports) {
     var _a;
     const propertiesCheckCode = [];
     const typeName = typeAliasDeclaration.getName();
@@ -1365,7 +1628,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
                 if (propType.isArray()) {
                     const elementType = propType.getArrayElementType();
                     propertiesCheckCode.push(elementType
-                        ? generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+                        ? generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports)
                         : `Array.isArray(${propRef})`);
                     return;
                 }
@@ -1392,7 +1655,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
                 }
                 else {
                     // For complex types, generate a thorough check (or fall back to existence check)
-                    const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
+                    const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
                     propertiesCheckCode.push(complexCheck !== null && complexCheck !== void 0 ? complexCheck : `typeof(${propRef}) !== "undefined"`);
                 }
             });
@@ -1420,7 +1683,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
             if (propType.isArray()) {
                 const elementType = propType.getArrayElementType();
                 propertiesCheckCode.push(elementType
-                    ? generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths)
+                    ? generateArrayPropertyCheck(propRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports)
                     : `Array.isArray(${propRef})`);
                 return;
             }
@@ -1455,7 +1718,7 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
             }
             else {
                 // For complex types, generate a thorough check (or fall back to existence check)
-                const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths);
+                const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
                 propertiesCheckCode.push(complexCheck !== null && complexCheck !== void 0 ? complexCheck : `typeof(${propRef}) !== "undefined"`);
             }
         });
@@ -1463,4 +1726,200 @@ function processTypeAlias(typeAliasDeclaration, importsRef, genFunctionImportsRe
     //  same blue as other types
     console.log(`  \x1b[36m${typeName}\x1b[0m`);
     return propertiesCheckCode;
+}
+// ---------------------------------------------------------------------------
+// Record<K, V> inline structural check
+// ---------------------------------------------------------------------------
+/**
+ * Build a check expression for a single value of `valueType` (referenced via `valueRef`).
+ * Returns null when the value should not be constrained (e.g. `any`/`unknown`, or a
+ * node_modules type with the opt-in disabled).
+ *
+ * Used inside Record's `Object.values(...).every(...)` callback.
+ */
+function generateValueCheckExpr(valueRef, valueType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports) {
+    var _a, _b, _c;
+    if (valueType.isAny() || valueType.isUnknown())
+        return null;
+    if (valueType.isString())
+        return `typeof ${valueRef} === "string"`;
+    if (valueType.isNumber())
+        return `typeof ${valueRef} === "number"`;
+    if (valueType.isBoolean())
+        return `typeof ${valueRef} === "boolean"`;
+    if (valueType.isStringLiteral())
+        return `${valueRef} === ${valueType.getText()}`;
+    if (valueType.isUnion() && valueType.getUnionTypes().every((t) => t.isStringLiteral())) {
+        return `(${valueType.getUnionTypes().map((t) => `${valueRef} === ${t.getText()}`).join(' || ')})`;
+    }
+    if (isRecordType(valueType)) {
+        return generateRecordCheck(valueRef, valueType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+    }
+    if (valueType.isArray()) {
+        const elementType = valueType.getArrayElementType();
+        if (elementType) {
+            return generateArrayPropertyCheck(valueRef, elementType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+        }
+        return `Array.isArray(${valueRef})`;
+    }
+    if (valueType.isObject()) {
+        if (valueType.getConstructSignatures().length > 0)
+            return null;
+        const symbol = (_a = valueType.getAliasSymbol()) !== null && _a !== void 0 ? _a : valueType.getSymbol();
+        const decl = ((_b = symbol === null || symbol === void 0 ? void 0 : symbol.getDeclarations()) !== null && _b !== void 0 ? _b : []).find((d) => d.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration) ||
+            d.isKind(ts_morph_1.ts.SyntaxKind.TypeAliasDeclaration));
+        if (decl && symbol) {
+            if (isInNodeModules(decl)) {
+                if (config.generateNodeModulesCasts && nodeModulesCasts && nodeModulesImports) {
+                    const typeName = symbol.getName();
+                    const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+                    nodeModulesCasts.set(typeName, { symbolName: typeName, decl: decl });
+                    nodeModulesImports.add(funcName);
+                    return `${funcName}(${valueRef}) !== ${config.failureReturnValue}`;
+                }
+                return null;
+            }
+            const declFile = decl.getSourceFile();
+            const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
+            const wouldCycle = isCrossFile && cyclicFilePaths.has(declFile.getFilePath());
+            if (!wouldCycle) {
+                const typeName = symbol.getName();
+                const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+                if (isCrossFile) {
+                    const funcSet = (_c = genFunctionImportsRef.get(declFile)) !== null && _c !== void 0 ? _c : new Set();
+                    funcSet.add(funcName);
+                    genFunctionImportsRef.set(declFile, funcSet);
+                }
+                return `${funcName}(${valueRef}) !== ${config.failureReturnValue}`;
+            }
+        }
+    }
+    return null;
+}
+/**
+ * Build the inline structural check for a `Record<K, V>` property.
+ * Always asserts the value is a non-array object. When K is a string-literal (or union of
+ * string literals), keys are constrained too. Values are constrained via `generateValueCheckExpr`.
+ */
+function generateRecordCheck(propRef, type, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports) {
+    const [keyType, valueType] = type.getAliasTypeArguments();
+    const isJS = config.outputLanguage === 'js';
+    const keyParam = isJS ? '(k)' : '(k: string)';
+    const valueParam = isJS ? '(v)' : '(v: unknown)';
+    const nullCheck = config.strictNullCheck
+        ? `${propRef} !== null && ${propRef} !== undefined`
+        : `${propRef} != null`;
+    const baseCheck = `${nullCheck} && typeof(${propRef}) === "object" && !Array.isArray(${propRef})`;
+    let keyPart = '';
+    if (keyType.isStringLiteral()) {
+        keyPart = ` && Object.keys(${propRef}).every(${keyParam} => k === ${keyType.getText()})`;
+    }
+    else if (keyType.isUnion() && keyType.getUnionTypes().every((t) => t.isStringLiteral())) {
+        const checks = keyType.getUnionTypes().map((t) => `k === ${t.getText()}`).join(' || ');
+        keyPart = ` && Object.keys(${propRef}).every(${keyParam} => (${checks}))`;
+    }
+    const valueCheck = generateValueCheckExpr('v', valueType, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+    const valuePart = valueCheck
+        ? ` && Object.values(${propRef}).every(${valueParam} => ${valueCheck})`
+        : '';
+    return `(${baseCheck}${keyPart}${valuePart})`;
+}
+// ---------------------------------------------------------------------------
+// node_modules casts file generation (opt-in via generateNodeModulesCasts)
+// ---------------------------------------------------------------------------
+/**
+ * Writes the shared node_modules cast functions file. Each entry produces a structural
+ * cast function that verifies the runtime object has the same own/inherited properties
+ * (and methods exist as functions) as the declared type. Property types beyond the immediate
+ * declaration are not recursively validated — keeps the output bounded for built-in types
+ * with deep prototype chains.
+ */
+function writeNodeModulesCastsFile(config, types) {
+    const ext = config.outputLanguage === 'js' ? 'js' : 'ts';
+    const outputPath = path_1.default.resolve(process.cwd(), config.nodeModulesCastsFilePath.replace('[ext]', ext));
+    const isJS = config.outputLanguage === 'js';
+    const failureValue = config.failureReturnValue;
+    const nullCheck = config.strictNullCheck
+        ? 'obj !== null && obj !== undefined'
+        : 'obj != null';
+    const header = `// This is an autogenerated file, DO NOT EDIT.
+// This file was generated by GenCast and contains structural cast functions for
+// types declared in node_modules (e.g. lib.*.d.ts built-ins, @types/* packages).
+`;
+    const bodyParts = [];
+    for (const entry of types.values()) {
+        const typeName = entry.symbolName;
+        const funcName = `${config.funcPrefix}${removeIPrefixMaybe(typeName, config.removeIPrefix)}`;
+        const checks = collectNodeModulesTypeChecks(entry.decl);
+        const allChecks = [nullCheck, ...checks].join(' && ');
+        if (isJS) {
+            bodyParts.push(`
+export function ${funcName}(obj) {
+  return (${allChecks}) ? obj : ${failureValue};
+}
+`);
+        }
+        else {
+            bodyParts.push(`
+export function ${funcName}(obj: any): any {
+  return (${allChecks}) ? obj : ${failureValue};
+}
+`);
+        }
+    }
+    fs_1.default.writeFileSync(outputPath, header + bodyParts.join(''));
+    console.log(`\n  \x1b[35m${path_1.default.relative(process.cwd(), outputPath)}\x1b[0m  (${types.size} type${types.size === 1 ? '' : 's'})`);
+}
+/**
+ * Build the list of structural checks for a node_modules-declared interface or type alias.
+ * Methods become `typeof obj.X === "function"`; primitive properties get a `typeof` check;
+ * everything else falls back to an existence check. Property types are NOT recursively
+ * resolved — node_modules types often reference other node_modules types and the chain
+ * would explode.
+ */
+function collectNodeModulesTypeChecks(decl) {
+    const checks = [];
+    const seen = new Set();
+    const pushIfNew = (name, expr) => {
+        if (seen.has(name))
+            return;
+        seen.add(name);
+        checks.push(expr);
+    };
+    if (decl.isKind(ts_morph_1.ts.SyntaxKind.InterfaceDeclaration)) {
+        const iface = decl;
+        iface.getMethods().forEach((m) => {
+            const name = m.getName();
+            pushIfNew(name, `typeof(obj.${name}) === "function"`);
+        });
+        iface.getProperties().forEach((p) => {
+            if (p.hasQuestionToken())
+                return;
+            const name = p.getName();
+            const t = p.getType();
+            if (t.isString() || t.isNumber() || t.isBoolean()) {
+                pushIfNew(name, `typeof(obj.${name}) === "${t.getText()}"`);
+            }
+            else {
+                pushIfNew(name, `typeof(obj.${name}) !== "undefined"`);
+            }
+        });
+    }
+    else {
+        const ta = decl;
+        ta.getType().getProperties().forEach((sym) => {
+            const name = sym.getName();
+            const t = sym.getTypeAtLocation(ta);
+            if (t.getCallSignatures().length > 0) {
+                pushIfNew(name, `typeof(obj.${name}) === "function"`);
+            }
+            else if (t.isString() || t.isNumber() || t.isBoolean()) {
+                pushIfNew(name, `typeof(obj.${name}) === "${t.getText()}"`);
+            }
+            else {
+                pushIfNew(name, `typeof(obj.${name}) !== "undefined"`);
+            }
+        });
+    }
+    return checks;
 }

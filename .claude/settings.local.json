@@ -5,7 +5,8 @@
       "Read(//tmp/**)",
       "Bash(cat)",
       "Bash(npx vitest *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npm run *)"
     ]
   }
 }
