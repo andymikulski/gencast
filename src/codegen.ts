@@ -187,9 +187,12 @@ export interface GenCastConfig {
    * it will be generated into a separate shared file at `nodeModulesCastsFilePath`,
    * and other gen files will import from there.
    *
-   * When `false` (default), references to `node_modules`-declared types are skipped:
-   * no `CastToX` call is emitted and no import to deep `node_modules` paths is created.
-   * Such properties fall back to a basic existence check.
+   * When `false` (default), references to `node_modules`-declared types are handled
+   * inline without any imports from deep `node_modules` paths:
+   *   - Runtime-global constructors (`Date`, `RegExp`, `Promise`, `Error`, `Map`,
+   *     `Set`, the typed arrays, etc.) are validated with `instanceof`.
+   *   - Anything else is skipped, and listed in a leading comment on the generated
+   *     cast function so it is clear which fields are not being validated.
    *
    * `Record<K, V>` is always handled inline regardless of this flag.
    *
@@ -281,6 +284,34 @@ function isInNodeModules(decl: { getSourceFile?: () => SourceFile } | undefined)
 }
 
 /**
+ * Type names that exist as both a TS type (in `lib.*.d.ts`) and a globally available
+ * runtime constructor. When a property's declared type is one of these, an `instanceof`
+ * check is correct and sufficient — gencast emits it inline instead of skipping.
+ *
+ * Conservative on purpose: only includes constructors guaranteed to exist in any
+ * standard ES/Node runtime. Browser-only globals (Element, HTMLElement, etc.) are
+ * deliberately excluded since they would throw `ReferenceError` in Node.
+ */
+const WELL_KNOWN_GLOBAL_CONSTRUCTORS: ReadonlySet<string> = new Set([
+  'Date', 'RegExp', 'Promise',
+  'Error', 'TypeError', 'RangeError', 'SyntaxError',
+  'ReferenceError', 'EvalError', 'URIError', 'AggregateError',
+  'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef',
+  'ArrayBuffer', 'SharedArrayBuffer', 'DataView',
+  'Int8Array', 'Uint8Array', 'Uint8ClampedArray',
+  'Int16Array', 'Uint16Array',
+  'Int32Array', 'Uint32Array',
+  'Float32Array', 'Float64Array',
+  'BigInt64Array', 'BigUint64Array',
+  'URL', 'URLSearchParams',
+]);
+
+/** True when `typeName` is a runtime-global constructor an `instanceof` check is valid for. */
+function isWellKnownGlobalConstructor(typeName: string): boolean {
+  return WELL_KNOWN_GLOBAL_CONSTRUCTORS.has(typeName);
+}
+
+/**
  * True for `Record<K, V>` where the alias declaration lives in node_modules
  * (i.e. the standard-library `Record`, not a user-defined alias of the same name).
  */
@@ -300,6 +331,40 @@ type NodeModulesCastEntry = {
   symbolName: string;
   decl: InterfaceDeclaration | TypeAliasDeclaration;
 };
+
+/**
+ * Per-cast-function tracker for properties whose validation was skipped because
+ * their type is declared in node_modules. Key is the property reference as it
+ * would appear in the generated check (e.g. `obj.occurredAt`); value is the
+ * type's symbol name (e.g. `Date`).
+ */
+type SkippedNodeModuleProps = Map<string, string>;
+
+/**
+ * Format a leading comment block for a cast function listing properties whose
+ * validation was skipped because their types live in node_modules. Returns an
+ * empty string when nothing was skipped.
+ *
+ * Key format:
+ *   - `<extends:Name>` → "extends Name" (inherited base type from node_modules)
+ *   - anything else    → "<key without obj. prefix>: Type" (a property)
+ */
+function formatSkippedNodeModulePropsComment(skipped: SkippedNodeModuleProps): string {
+  if (skipped.size === 0) return '';
+  const lines = [
+    '  // Validation skipped for the following because their types are declared in node_modules',
+    '  // and have no runtime constructor. Set generateNodeModulesCasts: true to validate them.',
+  ];
+  for (const [key, typeName] of skipped) {
+    if (key.startsWith('<extends:')) {
+      lines.push(`  //   - extends ${typeName}`);
+    } else {
+      const display = key.replace(/^obj\./, '');
+      lines.push(`  //   - ${display}: ${typeName}`);
+    }
+  }
+  return lines.join('\n') + '\n';
+}
 
 // Default configuration
 const DEFAULT_CONFIG: Required<GenCastConfig> = {
@@ -1071,7 +1136,8 @@ function generateCodegenFile(
   interfaces.forEach((int) => {
     const interfaceName = int.getName();
 
-    var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config, false, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+    const skippedNodeModuleProps: SkippedNodeModuleProps = new Map();
+    var compiledPropChecks = processInterface(int, typeImports, genFunctionImports, sourceFile, config, false, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports, skippedNodeModuleProps);
 
     if (compiledPropChecks.length === 0) {
       const color = config.outputEmptyInterfaces ? '\x1b[33m' : '\x1b[31m';
@@ -1120,6 +1186,7 @@ function generateCodegenFile(
 
     const funcName = `${config.funcPrefix}${removeIPrefixMaybe(interfaceName, config.removeIPrefix)}`;
     const failureValue = config.failureReturnValue;
+    const skippedComment = formatSkippedNodeModulePropsComment(skippedNodeModuleProps);
 
     if (config.enableWeakMapCaching) {
       // compiledPropChecks[0] is the null-check; the rest are property checks.
@@ -1132,7 +1199,7 @@ function generateCodegenFile(
       if (isJS) {
         generatedCode += `
   let ${cacheVar};
-  export function ${funcName}(obj) {
+${skippedComment}  export function ${funcName}(obj) {
     if (obj != null && typeof obj === 'object') {
       if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
       const _cached = ${cacheVar}.get(obj);
@@ -1147,7 +1214,7 @@ function generateCodegenFile(
       } else {
         generatedCode += `
   let ${cacheVar}: WeakMap<object, boolean> | undefined;
-  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
+${skippedComment}  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
     if (obj != null && typeof obj === 'object') {
       if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
       const _cached = ${cacheVar}.get(obj);
@@ -1164,13 +1231,13 @@ function generateCodegenFile(
       const checks = compiledPropChecks.join(' && ');
       if (isJS) {
         generatedCode += `
-  export function ${funcName}(obj) {
+${skippedComment}  export function ${funcName}(obj) {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
       } else {
         generatedCode += `
-  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
+${skippedComment}  export function ${funcName}${fullGenString}(obj: any): ${interfaceName}${shortGenString} | ${failureValue} {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
@@ -1239,7 +1306,8 @@ function generateCodegenFile(
       return;
     }
 
-    var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
+    const skippedNodeModuleProps: SkippedNodeModuleProps = new Map();
+    var compiledPropChecks = processTypeAlias(typeAlias, typeImports, genFunctionImports, sourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports, skippedNodeModuleProps);
 
     if (compiledPropChecks.length === 0) {
       const color = config.outputEmptyInterfaces ? '🟨' : '❌';
@@ -1283,6 +1351,7 @@ function generateCodegenFile(
 
     const funcName = `${config.funcPrefix}${typeName}`;
     const failureValue = config.failureReturnValue;
+    const skippedComment = formatSkippedNodeModulePropsComment(skippedNodeModuleProps);
 
     if (config.enableWeakMapCaching) {
       const bodyChecks = compiledPropChecks.slice(1);
@@ -1292,7 +1361,7 @@ function generateCodegenFile(
       if (isJS) {
         generatedCode += `
   let ${cacheVar};
-  export function ${funcName}(obj) {
+${skippedComment}  export function ${funcName}(obj) {
     if (obj != null && typeof obj === 'object') {
       if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
       const _cached = ${cacheVar}.get(obj);
@@ -1307,7 +1376,7 @@ function generateCodegenFile(
       } else {
         generatedCode += `
   let ${cacheVar}: WeakMap<object, boolean> | undefined;
-  export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
+${skippedComment}  export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
     if (obj != null && typeof obj === 'object') {
       if (!${cacheVar}) { ${cacheVar} = new WeakMap(); }
       const _cached = ${cacheVar}.get(obj);
@@ -1324,13 +1393,13 @@ function generateCodegenFile(
       const checks = compiledPropChecks.join(' && ');
       if (isJS) {
         generatedCode += `
-  export function ${funcName}(obj) {
+${skippedComment}  export function ${funcName}(obj) {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
       } else {
         generatedCode += `
-  export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
+${skippedComment}  export function ${funcName}${fullGenString}(obj: any): ${typeName}${shortGenString} | ${failureValue} {
     return (${checks}) ? obj : ${failureValue};
   }
   `;
@@ -1641,7 +1710,8 @@ function processInterface(
   cyclicFilePaths: Set<string> = new Set(),
   utilityImports?: Set<string>,
   nodeModulesCasts?: Map<string, NodeModulesCastEntry>,
-  nodeModulesImports?: Set<string>
+  nodeModulesImports?: Set<string>,
+  skippedNodeModuleProps?: SkippedNodeModuleProps
 ): string[] {
   const propertiesCheckCode: string[] = [];
 
@@ -1674,8 +1744,15 @@ function processInterface(
             nodeModulesCasts.set(baseName, { symbolName: baseName, decl: baseInterface });
             nodeModulesImports.add(baseFuncName);
             propertiesCheckCode.push(`${baseFuncName}(obj) !== ${config.failureReturnValue}`);
+            return;
           }
-          // Default: silently skip the base check (can't reference node_modules types).
+          // For runtime-global constructors (e.g. `extends Error`), emit instanceof.
+          if (isWellKnownGlobalConstructor(baseName)) {
+            propertiesCheckCode.push(`obj instanceof ${baseName}`);
+            return;
+          }
+          // Default: skip the base check and record it for the leading comment.
+          skippedNodeModuleProps?.set(`<extends:${baseName}>`, baseName);
           return;
         }
         const baseFile = baseInterface.getSourceFile();
@@ -1697,7 +1774,8 @@ function processInterface(
             cyclicFilePaths,
             utilityImports,
             nodeModulesCasts,
-            nodeModulesImports
+            nodeModulesImports,
+            skippedNodeModuleProps
           );
           propertiesCheckCode.push(...subProps);
         } else {
@@ -1748,7 +1826,8 @@ function processInterface(
           cyclicFilePaths,
           utilityImports,
           nodeModulesCasts,
-          nodeModulesImports
+          nodeModulesImports,
+          skippedNodeModuleProps
         );
         propertiesCheckCode.push(...subProps);
       }
@@ -1813,7 +1892,19 @@ function processInterface(
       return;
     }
 
+    // Generic types from node_modules that are also runtime-global constructors
+    // (Promise<T>, Map<K,V>, Set<T>, the typed arrays, etc.) — instanceof handles
+    // them just fine, so check this BEFORE bailing out on type arguments below.
     if (type.getTypeArguments().length > 0) {
+      const gSymbol = type.getAliasSymbol() ?? type.getSymbol();
+      const gDecl = (gSymbol?.getDeclarations() ?? []).find(
+        (d) =>
+          d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+          d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+      );
+      if (gDecl && gSymbol && isInNodeModules(gDecl) && isWellKnownGlobalConstructor(gSymbol.getName())) {
+        propertiesCheckCode.push(`obj.${propName} instanceof ${gSymbol.getName()}`);
+      }
       return;
     }
 
@@ -1849,8 +1940,16 @@ function processInterface(
             propertiesCheckCode.push(`${funcName}(obj.${propName}) !== ${config.failureReturnValue}`);
             return;
           }
-          // Default: don't reference node_modules — fall back to existence check.
-          propertiesCheckCode.push(`typeof(obj.${propName}) !== "undefined"`);
+          const nmTypeName = symbol.getName();
+          // For runtime-global constructors (Date, Map, Promise, Error, ...) an instanceof
+          // check is correct and sufficient — emit it inline rather than skipping.
+          if (isWellKnownGlobalConstructor(nmTypeName)) {
+            propertiesCheckCode.push(`obj.${propName} instanceof ${nmTypeName}`);
+            return;
+          }
+          // Default: skip emitting any check — record the type for the leading comment so the
+          // generated cast clearly states which properties are not being validated.
+          skippedNodeModuleProps?.set(`obj.${propName}`, nmTypeName);
           return;
         }
         const declFile = decl.getSourceFile();
@@ -1991,7 +2090,8 @@ function generateComplexTypeCheck(
   cyclicFilePaths: Set<string> = new Set(),
   utilityImports?: Set<string>,
   nodeModulesCasts?: Map<string, NodeModulesCastEntry>,
-  nodeModulesImports?: Set<string>
+  nodeModulesImports?: Set<string>,
+  skippedNodeModuleProps?: SkippedNodeModuleProps
 ): string | null {
   // Record<K, V> — emit an inline structural check rather than treating it as a named type.
   if (isRecordType(propType)) {
@@ -2025,8 +2125,15 @@ function generateComplexTypeCheck(
           nodeModulesImports.add(funcName);
           return `${funcName}(${propRef}) !== ${config.failureReturnValue}`;
         }
-        // Default: don't reference node_modules — fall back to existence check.
-        return `typeof(${propRef}) !== "undefined"`;
+        const nmTypeName = symbol.getName();
+        // Runtime-global constructors (Date, Map, Promise, ...) — emit instanceof inline.
+        if (isWellKnownGlobalConstructor(nmTypeName)) {
+          return `${propRef} instanceof ${nmTypeName}`;
+        }
+        // Default: skip emitting any check — record the type so the caller can list it
+        // in the cast function's leading comment.
+        skippedNodeModuleProps?.set(propRef, nmTypeName);
+        return null;
       }
       const declFile = decl.getSourceFile();
       const isCrossFile = declFile.getFilePath() !== currentSourceFile.getFilePath();
@@ -2132,6 +2239,11 @@ function generateArrayPropertyCheck(
           }
           return `${base} && ${propRef}.every(${itemParam} => ${funcName}(item) !== ${failureValue})`;
         }
+        // For runtime-global constructors, validate each element with instanceof.
+        const nmTypeName = symbol.getName();
+        if (isWellKnownGlobalConstructor(nmTypeName)) {
+          return `${base} && ${propRef}.every(${itemParam} => item instanceof ${nmTypeName})`;
+        }
         // Default: don't reference node_modules — fall back to the array-only check.
         return base;
       }
@@ -2168,7 +2280,8 @@ function processTypeAlias(
   cyclicFilePaths: Set<string> = new Set(),
   utilityImports?: Set<string>,
   nodeModulesCasts?: Map<string, NodeModulesCastEntry>,
-  nodeModulesImports?: Set<string>
+  nodeModulesImports?: Set<string>,
+  skippedNodeModuleProps?: SkippedNodeModuleProps
 ): string[] {
   const propertiesCheckCode: string[] = [];
 
@@ -2206,6 +2319,16 @@ function processTypeAlias(
         }
 
         if (propType.getTypeArguments().length > 0) {
+          // Generic node_modules globals (Promise<T>, Map<K,V>, ...) get an instanceof check.
+          const gSymbol = propType.getAliasSymbol() ?? propType.getSymbol();
+          const gDecl = (gSymbol?.getDeclarations() ?? []).find(
+            (d) =>
+              d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+              d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+          );
+          if (gDecl && gSymbol && isInNodeModules(gDecl) && isWellKnownGlobalConstructor(gSymbol.getName())) {
+            propertiesCheckCode.push(`${propRef} instanceof ${gSymbol.getName()}`);
+          }
           return;
         }
 
@@ -2229,9 +2352,15 @@ function processTypeAlias(
             .join(' || ');
           propertiesCheckCode.push(`(${checks})`);
         } else {
-          // For complex types, generate a thorough check (or fall back to existence check)
-          const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
-          propertiesCheckCode.push(complexCheck ?? `typeof(${propRef}) !== "undefined"`);
+          // For complex types, generate a thorough check (or fall back to existence check).
+          // When the helper records a node_modules skip, omit any check entirely — the
+          // generated function's leading comment will document which props were skipped.
+          const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports, skippedNodeModuleProps);
+          if (complexCheck !== null) {
+            propertiesCheckCode.push(complexCheck);
+          } else if (!skippedNodeModuleProps?.has(propRef)) {
+            propertiesCheckCode.push(`typeof(${propRef}) !== "undefined"`);
+          }
         }
       });
     });
@@ -2266,6 +2395,16 @@ function processTypeAlias(
       }
 
       if (propType.getTypeArguments().length > 0) {
+        // Generic node_modules globals (Promise<T>, Map<K,V>, ...) get an instanceof check.
+        const gSymbol = propType.getAliasSymbol() ?? propType.getSymbol();
+        const gDecl = (gSymbol?.getDeclarations() ?? []).find(
+          (d) =>
+            d.isKind(ts.SyntaxKind.InterfaceDeclaration) ||
+            d.isKind(ts.SyntaxKind.TypeAliasDeclaration)
+        );
+        if (gDecl && gSymbol && isInNodeModules(gDecl) && isWellKnownGlobalConstructor(gSymbol.getName())) {
+          propertiesCheckCode.push(`${propRef} instanceof ${gSymbol.getName()}`);
+        }
         return;
       }
 
@@ -2295,9 +2434,15 @@ function processTypeAlias(
           .join(' || ');
         propertiesCheckCode.push(`(${checks})`);
       } else {
-        // For complex types, generate a thorough check (or fall back to existence check)
-        const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports);
-        propertiesCheckCode.push(complexCheck ?? `typeof(${propRef}) !== "undefined"`);
+        // For complex types, generate a thorough check (or fall back to existence check).
+        // When the helper records a node_modules skip, omit any check entirely — the
+        // generated function's leading comment will document which props were skipped.
+        const complexCheck = generateComplexTypeCheck(propRef, propType, typeAliasDeclaration, genFunctionImportsRef, currentSourceFile, config, cyclicFilePaths, utilityImports, nodeModulesCasts, nodeModulesImports, skippedNodeModuleProps);
+        if (complexCheck !== null) {
+          propertiesCheckCode.push(complexCheck);
+        } else if (!skippedNodeModuleProps?.has(propRef)) {
+          propertiesCheckCode.push(`typeof(${propRef}) !== "undefined"`);
+        }
       }
     });
   }

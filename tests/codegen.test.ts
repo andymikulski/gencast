@@ -741,18 +741,54 @@ describe('generateCodegen - Record<K, V> properties', () => {
 });
 
 describe('generateCodegen - node_modules type references', () => {
-  it('falls back to an existence check by default (no node_modules import)', () => {
+  it('uses instanceof for runtime-global constructors (Date) by default', () => {
     const { run, read, exists, cleanup } = scratch(['NodeModulesTypes.ts']);
     try {
       run();
       const out = read('NodeModulesTypes.gen.ts');
-      // Date is in node_modules — must not reference CastToDate or import from node_modules
+      // Must not reference a generated CastToDate or import from a node_modules path
       expect(out).not.toContain('CastToDate');
-      expect(out).not.toContain('node_modules');
-      // Expect the existence-check fallback
-      expect(out).toContain('typeof(obj.occurredAt) !== "undefined"');
+      expect(out).not.toMatch(/from ['"][^'"]*node_modules/);
+      // Date is a global constructor — emit instanceof inline
+      expect(out).toContain('obj.occurredAt instanceof Date');
+      // The redundant existence-check fallback should no longer be emitted
+      expect(out).not.toContain('typeof(obj.occurredAt) !== "undefined"');
       // The opt-in side-file must NOT exist
       expect(exists('gencast.nodemodules.gen.ts')).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits instanceof for the full set of supported global constructors', () => {
+    const { run, read, cleanup } = scratch(['NodeModulesTypes.ts']);
+    try {
+      run();
+      const out = read('NodeModulesTypes.gen.ts');
+      expect(out).toContain('obj.when instanceof Date');
+      expect(out).toContain('obj.pattern instanceof RegExp');
+      expect(out).toContain('obj.pending instanceof Promise');
+      expect(out).toContain('obj.cause instanceof Error');
+      expect(out).toContain('obj.bag instanceof Map');
+      expect(out).toContain('obj.bytes instanceof Uint8Array');
+      // Arrays of built-ins use .every(item => item instanceof X)
+      expect(out).toContain('obj.many.every');
+      expect(out).toContain('item instanceof Date');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips non-constructor node_modules types and documents them in a leading comment', () => {
+    const { run, read, cleanup } = scratch(['NodeModulesTypes.ts']);
+    try {
+      run();
+      const out = read('NodeModulesTypes.gen.ts');
+      // PropertyDescriptor has no runtime constructor — skip with comment, no instanceof
+      expect(out).not.toContain('instanceof PropertyDescriptor');
+      expect(out).not.toContain('typeof(obj.meta) !== "undefined"');
+      expect(out).toContain('Validation skipped');
+      expect(out).toContain('meta: PropertyDescriptor');
     } finally {
       cleanup();
     }

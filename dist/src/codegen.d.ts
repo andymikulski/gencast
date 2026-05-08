@@ -157,9 +157,12 @@ export interface GenCastConfig {
      * it will be generated into a separate shared file at `nodeModulesCastsFilePath`,
      * and other gen files will import from there.
      *
-     * When `false` (default), references to `node_modules`-declared types are skipped:
-     * no `CastToX` call is emitted and no import to deep `node_modules` paths is created.
-     * Such properties fall back to a basic existence check.
+     * When `false` (default), references to `node_modules`-declared types are handled
+     * inline without any imports from deep `node_modules` paths:
+     *   - Runtime-global constructors (`Date`, `RegExp`, `Promise`, `Error`, `Map`,
+     *     `Set`, the typed arrays, etc.) are validated with `instanceof`.
+     *   - Anything else is skipped, and listed in a leading comment on the generated
+     *     cast function so it is clear which fields are not being validated.
      *
      * `Record<K, V>` is always handled inline regardless of this flag.
      *
