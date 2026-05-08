@@ -371,6 +371,62 @@ describe('generateCodegen - type aliases (generateTypeCasts: true)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Regression: enum unions must not emit inline `import(...)` expressions
+// ---------------------------------------------------------------------------
+
+describe('generateCodegen - enum unions', () => {
+  // Enum members are literal types in TypeScript, but ts-morph's `Type.getText()`
+  // renders cross-file enum members as `import("/abs/path").Enum.Member`. Without
+  // an explicit fix, that text leaks into the generated cast as an inline
+  // `import(...)` expression — both broken at runtime and a bundler nightmare.
+  it('emits literal-value equality checks for a union of string-valued enums', () => {
+    const { run, read, cleanup } = scratch(['EnumUnion.ts']);
+    try {
+      run({ generateTypeCasts: true });
+      const out = read('EnumUnion.gen.ts');
+      expect(out).not.toMatch(/import\s*\(/);
+      expect(out).toContain('export function CastToAnyAnimal');
+      expect(out).toContain('obj === "cat"');
+      expect(out).toContain('obj === "dog"');
+      expect(out).toContain('obj === "bird"');
+      expect(out).toContain('obj === "fish"');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits literal-value equality checks for a numeric enum alias', () => {
+    const { run, read, cleanup } = scratch(['EnumUnion.ts']);
+    try {
+      run({ generateTypeCasts: true });
+      const out = read('EnumUnion.gen.ts');
+      expect(out).not.toMatch(/import\s*\(/);
+      expect(out).toContain('export function CastToAnyNumbered');
+      expect(out).toContain('obj === 0');
+      expect(out).toContain('obj === 1');
+      expect(out).toContain('obj === 2');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('emits literal checks for enum-typed interface properties', () => {
+    const { run, read, cleanup } = scratch(['EnumUnion.ts']);
+    try {
+      run({ generateTypeCasts: true });
+      const out = read('EnumUnion.gen.ts');
+      expect(out).not.toMatch(/import\s*\(/);
+      expect(out).toContain('export function CastToHasEnumProp');
+      expect(out).toContain('obj.pet === "cat"');
+      expect(out).toContain('obj.rank === 0');
+      expect(out).toContain('obj.multi === "bird"');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Config: class cast generation
 // ---------------------------------------------------------------------------
 
